@@ -26,6 +26,9 @@ class BookmarkClient(ABC):
     @abstractmethod
     def delete_bookmark(self, id: str) -> None: ...
 
+    @abstractmethod
+    def delete_bookmarks(self, ids: list[int]) -> None: ...
+
 
 class RaindropClient(BookmarkClient):
     BASE_URL = "https://api.raindrop.io/rest/v1"

@@ -1,13 +1,10 @@
 import logging
 
+from fillnel.config import MAX_ARTICLES, TOP_DOMAINS, TOP_TOPICS
 from fillnel.services.gemini import GeminiClient
 from fillnel.services import profile as profile_svc
 
 logger = logging.getLogger(__name__)
-
-MAX_ARTICLES = 10
-TOP_TOPICS = 5
-TOP_DOMAINS = 10
 
 
 def run(gemini: GeminiClient, favorites: list[dict] | None = None) -> list[dict]:

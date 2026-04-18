@@ -1,13 +1,11 @@
 import logging
 import time
 
+from fillnel.config import ENRICH_REQUEST_DELAY
 from fillnel.services.gemini import GeminiClient
 from fillnel.services.raindrop import BookmarkClient
 
 logger = logging.getLogger(__name__)
-
-# 15 RPM制限に対して余裕をもって12 RPM以下に抑える（60 / 12 = 5秒）
-INTER_REQUEST_DELAY = 5
 
 
 def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: int, force: bool = False) -> None:
@@ -35,7 +33,7 @@ def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: 
             excerpt = gemini.summarize_article(title=title, url=url)
             if excerpt:
                 patch["excerpt"] = excerpt
-            time.sleep(INTER_REQUEST_DELAY)
+            time.sleep(ENRICH_REQUEST_DELAY)
 
         # タグが空の場合（またはforceの場合）は推定して付与
         tags = item.get("tags", [])
@@ -43,7 +41,7 @@ def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: 
             tags = gemini.estimate_tags(title=title, url=url, existing_tags=existing_tags)
             if tags:
                 patch["tags"] = tags
-            time.sleep(INTER_REQUEST_DELAY)
+            time.sleep(ENRICH_REQUEST_DELAY)
 
         if patch:
             raindrop.update_bookmark(item["_id"], patch)

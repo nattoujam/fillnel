@@ -13,8 +13,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from fillnel.config import TOP_TOPICS
 from fillnel.services import profile as profile_svc
-from fillnel.steps.collect import TOP_TOPICS
 
 BAR_WIDTH = 28
 console = Console()

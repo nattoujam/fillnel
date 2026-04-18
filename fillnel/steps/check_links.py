@@ -3,13 +3,13 @@ import time
 
 import requests
 
+from fillnel.config import CHECK_LINKS_REQUEST_DELAY
 from fillnel.services.raindrop import BookmarkClient, UNSORTED_COLLECTION_ID
 
 logger = logging.getLogger(__name__)
 
 BROKEN_STATUS_CODES = {404, 410}
 REQUEST_TIMEOUT = 10
-INTER_REQUEST_DELAY = 1  # サーバー負荷を考慮した間隔
 
 
 def _check_url(url: str) -> tuple[bool, str]:
@@ -58,6 +58,6 @@ def run(raindrop: BookmarkClient, broken_collection_id: int) -> None:
             logger.info(f"check_links: リンク切れ [{reason}] {url}")
             broken_count += 1
 
-        time.sleep(INTER_REQUEST_DELAY)
+        time.sleep(CHECK_LINKS_REQUEST_DELAY)
 
     logger.info(f"check_links: 完了 — {broken_count}件のリンク切れを検出")

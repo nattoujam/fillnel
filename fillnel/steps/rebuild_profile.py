@@ -1,12 +1,11 @@
 import logging
 from urllib.parse import urlparse
 
+from fillnel.config import TOP_FAVORITES
 from fillnel.services.raindrop import BookmarkClient
 from fillnel.services import profile as profile_svc
 
 logger = logging.getLogger(__name__)
-
-TOP_FAVORITES = 5
 
 
 def run(raindrop: BookmarkClient, favorite_collection_id: int) -> list[dict]:

@@ -2,8 +2,9 @@ import json
 import os
 from pathlib import Path
 
+from fillnel.config import WEIGHT_INCREMENT
+
 PROFILE_PATH = Path(os.environ.get("PROFILE_PATH", "data/profile.json"))
-WEIGHT_INCREMENT = 2.0
 
 
 def load() -> dict:
