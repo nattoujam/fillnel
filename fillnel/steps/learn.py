@@ -1,5 +1,6 @@
 import logging
 import time
+from urllib.parse import urlparse
 
 from fillnel.services.gemini import GeminiClient
 from fillnel.services.raindrop import BookmarkClient
@@ -38,6 +39,9 @@ def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: 
             time.sleep(INTER_REQUEST_DELAY)
 
         profile_svc.increment(profile, tags)
+
+        domain = urlparse(item.get("link", "")).netloc.removeprefix("www.")
+        profile_svc.increment_domains(profile, [domain])
 
     profile_svc.save(profile)
     logger.info("learn: プロファイル更新完了")

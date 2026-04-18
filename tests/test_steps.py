@@ -66,8 +66,8 @@ class TestLearn:
 
         gemini.estimate_tags.assert_not_called()
         profile = profile_svc.load()
-        assert profile["AI"] == 2.0
-        assert profile["機械学習"] == 2.0
+        assert profile["tags"]["AI"] == 2.0
+        assert profile["tags"]["機械学習"] == 2.0
 
     def test_estimates_tags_for_untagged_items(self, tmp_path, monkeypatch):
         import fillnel.services.profile as profile_svc
@@ -90,7 +90,7 @@ class TestLearn:
         )
         client.update_bookmark.assert_called_once_with(1, {"tags": ["AI", "TypeScript"]})
         profile = profile_svc.load()
-        assert profile["AI"] == 2.0
+        assert profile["tags"]["AI"] == 2.0
 
     def test_force_retags_already_tagged_items(self, tmp_path, monkeypatch):
         import fillnel.services.profile as profile_svc

@@ -5,6 +5,7 @@ import re
 import time
 
 import requests
+from urllib.parse import urlparse
 from google import genai
 from google.genai import types
 from google.genai.errors import ClientError, ServerError
@@ -16,11 +17,28 @@ MODEL = "gemini-2.5-flash"
 TAG_MODEL = "gemini-3.1-flash-lite-preview"
 
 COLLECT_PROMPT = """\
-以下のトピックに関する最近の記事を5件探してください。
+以下の情報をもとに、ユーザーの興味に合った最近の技術記事を5件探してください。
 
-トピック: {topics}
+興味トピック（重み順）:
+{topics}
+{domains_section}
+優先条件（以下に該当する記事を優先すること）：
+- 技術的な実装・設計・考察を含む記事
+- 著者の一次情報・独自検証・実体験にもとづく記事
+- 具体的なコード・手順・数値を含む記事
 
-各記事について50字以内の日本語要約を添えてください。
+除外条件（以下に該当する記事は絶対に選ばないこと）：
+- AIが自動生成した記事
+- ランキング・おすすめ商品・まとめ系の記事（独自の考察がないもの）
+- 新製品発表・リリース情報のみのニュース記事
+- ガジェット・デバイス紹介記事
+- 業務効率化・ライフハック系の浅い記事
+
+各記事を以下の形式で出力してください：
+
+タイトル: <記事タイトル>
+URL: <記事の正確なURL>
+要約: <50字以内の日本語要約>
 """
 
 ESTIMATE_TAGS_PROMPT = """\
@@ -63,24 +81,78 @@ def _resolve_url(url: str) -> str:
         return url
 
 
-def _extract_articles(response) -> list[dict]:
-    """grounding_chunksから重複排除した実URLのリストを返す。"""
-    candidate = response.candidates[0]
+_ARTICLE_PATTERN = re.compile(
+    r"タイトル[:：]\s*(.+)\n"
+    r"URL[:：]\s*(https?://[^\s\n]+)\n"
+    r"要約[:：]\s*(.+)"
+)
 
+
+def _is_root_url(url: str) -> bool:
+    """ドメインのトップページ（記事URLでない）かどうかを判定する。"""
+    parsed = urlparse(url)
+    return parsed.path in ("", "/") and not parsed.query
+
+
+def _grounding_domains(candidate) -> set[str]:
+    """grounding_chunksのリダイレクトURLを解決してドメインセットを返す。"""
+    domains: set[str] = set()
+    if not (candidate.grounding_metadata and candidate.grounding_metadata.grounding_chunks):
+        return domains
+    for chunk in candidate.grounding_metadata.grounding_chunks:
+        if chunk.web and chunk.web.uri:
+            resolved = _resolve_url(chunk.web.uri)
+            domain = urlparse(resolved).netloc.removeprefix("www.")
+            if domain:
+                domains.add(domain)
+    return domains
+
+
+def _parse_articles_from_text(text: str, allowed_domains: set[str]) -> list[dict]:
+    """レスポンステキストから構造化記事データをパースし、ドメイン検証する。"""
+    articles = []
+    for title, url, summary in _ARTICLE_PATTERN.findall(text):
+        url = url.rstrip(".,)」）")
+        domain = urlparse(url).netloc.removeprefix("www.")
+        if allowed_domains and domain not in allowed_domains:
+            logger.warning(f"グラウンディング外URLをスキップ: {url} (domain={domain})")
+            continue
+        articles.append({"url": url, "title": title.strip(), "summary": summary.strip()})
+    return articles
+
+
+def _extract_from_chunks(candidate) -> list[dict]:
+    """grounding_chunksからURLを抽出する（テキストパース失敗時のフォールバック）。"""
     chunks = []
-    seen = set()
-    if candidate.grounding_metadata and candidate.grounding_metadata.grounding_chunks:
-        for chunk in candidate.grounding_metadata.grounding_chunks:
-            if chunk.web and chunk.web.uri and chunk.web.uri not in seen:
-                seen.add(chunk.web.uri)
-                real_url = _resolve_url(chunk.web.uri)
-                logger.debug(f"URL解決: {chunk.web.uri[:60]}... → {real_url}")
-                chunks.append({
-                    "url": real_url,
-                    "summary": "",
-                })
+    seen: set[str] = set()
+    if not (candidate.grounding_metadata and candidate.grounding_metadata.grounding_chunks):
+        return chunks
+    for chunk in candidate.grounding_metadata.grounding_chunks:
+        if chunk.web and chunk.web.uri and chunk.web.uri not in seen:
+            seen.add(chunk.web.uri)
+            real_url = _resolve_url(chunk.web.uri)
+            if _is_root_url(real_url):
+                logger.warning(f"ルートURLのためスキップ: {chunk.web.uri[:60]}... → {real_url}")
+                continue
+            logger.debug(f"URL解決: {chunk.web.uri[:60]}... → {real_url}")
+            chunks.append({"url": real_url, "summary": ""})
+    return chunks
 
-    logger.debug(f"grounding_chunks から {len(chunks)} 件のURLを取得")
+
+def _extract_articles(response) -> list[dict]:
+    """レスポンステキストをパース（優先）し、失敗時は grounding_chunks にフォールバック。"""
+    candidate = response.candidates[0]
+    domains = _grounding_domains(candidate)
+    logger.debug(f"grounding domains: {domains}")
+
+    articles = _parse_articles_from_text(response.text, domains)
+    if articles:
+        logger.debug(f"テキストパースで {len(articles)} 件取得")
+        return articles
+
+    logger.warning("テキストパース失敗、grounding_chunksにフォールバック")
+    chunks = _extract_from_chunks(candidate)
+    logger.debug(f"grounding_chunks から {len(chunks)} 件取得")
     return chunks
 
 
@@ -133,9 +205,18 @@ class GeminiClient:
             contents=prompt,
         )
 
-    def collect_articles(self, topics: list[str]) -> list[dict]:
-        prompt = COLLECT_PROMPT.format(
-            topics=", ".join(topics) if topics else "一般技術")
+    def collect_articles(self, tag_weights: dict[str, float], domains: list[str]) -> list[dict]:
+        if tag_weights:
+            topics_str = ", ".join(
+                f"{t} ({w:.1f})"
+                for t, w in sorted(tag_weights.items(), key=lambda x: x[1], reverse=True)
+            )
+        else:
+            topics_str = "一般技術"
+        domains_section = (
+            f"\n好みのドメイン（参考）:\n{', '.join(domains)}\n" if domains else ""
+        )
+        prompt = COLLECT_PROMPT.format(topics=topics_str, domains_section=domains_section)
         logger.debug(f"Gemini request prompt:\n{prompt}")
         try:
             response = self._generate(prompt)

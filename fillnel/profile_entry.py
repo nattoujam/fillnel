@@ -29,7 +29,10 @@ def main() -> None:
     load_dotenv()
     profile = profile_svc.load()
 
-    if not profile:
+    tags = profile.get("tags", {})
+    domains = profile.get("domains", {})
+
+    if not tags:
         console.print(Panel(
             "[yellow]プロファイルデータがありません。[/yellow]\n"
             "まだ学習が行われていないか、お気に入りフォルダに記事がありません。",
@@ -38,7 +41,7 @@ def main() -> None:
         ))
         return
 
-    sorted_tags = sorted(profile.items(), key=lambda x: x[1], reverse=True)
+    sorted_tags = sorted(tags.items(), key=lambda x: x[1], reverse=True)
     max_weight = sorted_tags[0][1]
     top_n = min(TOP_TOPICS, len(sorted_tags))
 
@@ -88,6 +91,28 @@ def main() -> None:
             table.add_section()
 
     console.print(table)
+
+    # ── ドメインテーブル ──────────────────────────────
+    if domains:
+        sorted_domains = sorted(domains.items(), key=lambda x: x[1], reverse=True)[:10]
+        domain_table = Table(
+            box=box.ROUNDED,
+            border_style="bright_black",
+            header_style="bold dim",
+            padding=(0, 1),
+            show_edge=True,
+            title="好みドメイン Top 10",
+            title_style="bold dim",
+        )
+        domain_table.add_column("#", justify="right", width=3, style="dim")
+        domain_table.add_column("ドメイン", min_width=20)
+        domain_table.add_column("記事数", justify="right", width=6)
+
+        for i, (domain, count) in enumerate(sorted_domains, 1):
+            domain_table.add_row(str(i), domain, str(count))
+
+        console.print(domain_table)
+
     console.print()
 
 
