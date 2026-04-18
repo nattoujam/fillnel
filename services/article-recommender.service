@@ -1,0 +1,9 @@
+[Unit]
+Description=Article Recommender Batch
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/euclase/Code/fillnel
+ExecStart=/usr/bin/docker compose run --rm batch
