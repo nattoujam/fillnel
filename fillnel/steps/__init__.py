@@ -1,0 +1,1 @@
+FAVORITE_COLLECTION = "お気に入り"

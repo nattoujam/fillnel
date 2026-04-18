@@ -4,12 +4,15 @@ import os
 import requests
 
 
+UNSORTED_COLLECTION_ID = -1
+
+
 class BookmarkClient(ABC):
     @abstractmethod
     def get_tags(self) -> list[str]: ...
 
     @abstractmethod
-    def get_bookmarks(self, **filter) -> list[dict]: ...
+    def get_bookmarks(self, collection_id: int | None = None, tag: str | None = None, not_tag: str | None = None) -> list[dict]: ...
 
     @abstractmethod
     def create_bookmark(self, bookmark: dict) -> None: ...
@@ -34,10 +37,11 @@ class RaindropClient(BookmarkClient):
         data = resp.json()
         return [item["_id"] for item in data.get("items", [])]
 
-    def get_bookmarks(self, tag: str | None = None, not_tag: str | None = None) -> list[dict]:
+    def get_bookmarks(self, collection_id: int | None = None, tag: str | None = None, not_tag: str | None = None) -> list[dict]:
         results = []
         page = 0
         per_page = 50
+        col = collection_id if collection_id is not None else 0
 
         search_filters = []
         if tag:
@@ -51,7 +55,7 @@ class RaindropClient(BookmarkClient):
 
         while True:
             params["page"] = page
-            resp = self._session.get(f"{self.BASE_URL}/raindrops/0", params=params)
+            resp = self._session.get(f"{self.BASE_URL}/raindrops/{col}", params=params)
             resp.raise_for_status()
             data = resp.json()
             items = data.get("items", [])
@@ -81,11 +85,8 @@ class RaindropClient(BookmarkClient):
     def delete_bookmarks(self, ids: list[int]) -> None:
         if not ids:
             return
-        resp = self._session.delete(
-            f"{self.BASE_URL}/raindrops",
-            json={"ids": ids},
-        )
-        resp.raise_for_status()
+        for id in ids:
+            self._session.delete(f"{self.BASE_URL}/raindrop/{id}").raise_for_status()
 
 
 def create_raindrop_client() -> RaindropClient:

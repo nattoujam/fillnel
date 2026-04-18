@@ -1,5 +1,5 @@
 import json
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -46,6 +46,14 @@ class TestGetBookmarks:
 
         assert len(items) == 60
         assert mock_get.call_count == 2
+
+    def test_fetches_from_specific_collection(self, client):
+        resp = mock_response({"items": []})
+        with patch.object(client._session, "get", return_value=resp) as mock_get:
+            client.get_bookmarks(collection_id=42)
+
+        url = mock_get.call_args[0][0]
+        assert url == "https://api.raindrop.io/rest/v1/raindrops/42"
 
     def test_filter_by_tag(self, client):
         resp = mock_response({"items": []})
@@ -101,15 +109,17 @@ class TestUpdateBookmark:
 
 
 class TestDeleteBookmarks:
-    def test_calls_delete_with_ids(self, client):
+    def test_calls_delete_per_id(self, client):
         resp = mock_response({})
         with patch.object(client._session, "delete", return_value=resp) as mock_del:
-            client.delete_bookmarks([1, 2, 3])
+            client.delete_bookmarks([1, 2])
 
-        mock_del.assert_called_once_with(
-            "https://api.raindrop.io/rest/v1/raindrops",
-            json={"ids": [1, 2, 3]},
-        )
+        assert mock_del.call_count == 2
+        calls = [c[0][0] for c in mock_del.call_args_list]
+        assert calls == [
+            "https://api.raindrop.io/rest/v1/raindrop/1",
+            "https://api.raindrop.io/rest/v1/raindrop/2",
+        ]
 
     def test_skips_empty_list(self, client):
         with patch.object(client._session, "delete") as mock_del:
