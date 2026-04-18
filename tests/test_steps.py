@@ -3,7 +3,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from fillnel.steps import cleanup, collect, register
+from fillnel.steps import cleanup, collect, learn, link_check, register
+from fillnel.steps.link_check import _check_url
 
 from fillnel.services.raindrop import UNSORTED_COLLECTION_ID
 
@@ -29,6 +30,99 @@ class TestCleanup:
         cleanup.run(client, COLLECTION_ID)
 
         client.delete_bookmarks.assert_not_called()
+
+
+# --- learn ---
+
+class TestLearn:
+    @pytest.fixture(autouse=True)
+    def no_sleep(self, monkeypatch):
+        monkeypatch.setattr("fillnel.steps.learn.time.sleep", lambda _: None)
+
+    def test_skips_when_no_items(self, tmp_path, monkeypatch):
+        import fillnel.services.profile as profile_svc
+        monkeypatch.setattr(profile_svc, "PROFILE_PATH", tmp_path / "profile.json")
+
+        client = MagicMock()
+        client.get_bookmarks.return_value = []
+        gemini = MagicMock()
+
+        learn.run(client, gemini, favorite_collection_id=99)
+
+        gemini.estimate_tags.assert_not_called()
+        assert not (tmp_path / "profile.json").exists()
+
+    def test_updates_profile_from_tagged_items(self, tmp_path, monkeypatch):
+        import fillnel.services.profile as profile_svc
+        monkeypatch.setattr(profile_svc, "PROFILE_PATH", tmp_path / "profile.json")
+
+        client = MagicMock()
+        client.get_bookmarks.return_value = [
+            {"_id": 1, "title": "AI記事", "link": "https://a.com", "tags": ["AI", "機械学習"]},
+        ]
+        gemini = MagicMock()
+
+        learn.run(client, gemini, favorite_collection_id=99)
+
+        gemini.estimate_tags.assert_not_called()
+        profile = profile_svc.load()
+        assert profile["AI"] == 2.0
+        assert profile["機械学習"] == 2.0
+
+    def test_estimates_tags_for_untagged_items(self, tmp_path, monkeypatch):
+        import fillnel.services.profile as profile_svc
+        monkeypatch.setattr(profile_svc, "PROFILE_PATH", tmp_path / "profile.json")
+
+        client = MagicMock()
+        client.get_bookmarks.return_value = [
+            {"_id": 1, "title": "AI記事", "link": "https://a.com", "tags": []},
+        ]
+        client.get_tags.return_value = ["AI", "TypeScript"]
+        gemini = MagicMock()
+        gemini.estimate_tags.return_value = ["AI", "TypeScript"]
+
+        learn.run(client, gemini, favorite_collection_id=99)
+
+        gemini.estimate_tags.assert_called_once_with(
+            title="AI記事",
+            url="https://a.com",
+            existing_tags=["AI", "TypeScript"],
+        )
+        client.update_bookmark.assert_called_once_with(1, {"tags": ["AI", "TypeScript"]})
+        profile = profile_svc.load()
+        assert profile["AI"] == 2.0
+
+    def test_force_retags_already_tagged_items(self, tmp_path, monkeypatch):
+        import fillnel.services.profile as profile_svc
+        monkeypatch.setattr(profile_svc, "PROFILE_PATH", tmp_path / "profile.json")
+
+        client = MagicMock()
+        client.get_bookmarks.return_value = [
+            {"_id": 1, "title": "AI記事", "link": "https://a.com", "tags": ["旧タグ"]},
+        ]
+        client.get_tags.return_value = ["AI", "Python"]
+        gemini = MagicMock()
+        gemini.estimate_tags.return_value = ["AI", "Python"]
+
+        learn.run(client, gemini, favorite_collection_id=99, force=True)
+
+        gemini.estimate_tags.assert_called_once()
+        client.update_bookmark.assert_called_once_with(1, {"tags": ["AI", "Python"]})
+
+    def test_skips_update_when_estimation_returns_empty(self, tmp_path, monkeypatch):
+        import fillnel.services.profile as profile_svc
+        monkeypatch.setattr(profile_svc, "PROFILE_PATH", tmp_path / "profile.json")
+
+        client = MagicMock()
+        client.get_bookmarks.return_value = [
+            {"_id": 1, "title": "記事", "link": "https://a.com", "tags": []},
+        ]
+        gemini = MagicMock()
+        gemini.estimate_tags.return_value = []
+
+        learn.run(client, gemini, favorite_collection_id=99)
+
+        client.update_bookmark.assert_not_called()
 
 
 # --- collect ---
@@ -92,3 +186,89 @@ class TestRegister:
         client = MagicMock()
         register.run(client, [], COLLECTION_ID)
         client.create_bookmark.assert_not_called()
+
+
+# --- link_check ---
+
+BROKEN_ID = 55
+NORMAL_ITEM = {"_id": 1, "link": "https://a.com", "collection": {"$id": 10}}
+UNSORTED_ITEM = {"_id": 2, "link": "https://b.com", "collection": {"$id": UNSORTED_COLLECTION_ID}}
+BROKEN_ITEM = {"_id": 3, "link": "https://c.com", "collection": {"$id": BROKEN_ID}}
+
+
+class TestCheckUrl:
+    def _mock_head(self, status_code):
+        resp = MagicMock()
+        resp.status_code = status_code
+        return resp
+
+    def test_returns_broken_on_404(self):
+        with patch("fillnel.steps.link_check.requests.head", return_value=self._mock_head(404)):
+            is_broken, reason = _check_url("https://example.com")
+        assert is_broken is True
+        assert "404" in reason
+
+    def test_returns_broken_on_410(self):
+        with patch("fillnel.steps.link_check.requests.head", return_value=self._mock_head(410)):
+            is_broken, reason = _check_url("https://example.com")
+        assert is_broken is True
+        assert "410" in reason
+
+    def test_returns_not_broken_on_200(self):
+        with patch("fillnel.steps.link_check.requests.head", return_value=self._mock_head(200)):
+            is_broken, _ = _check_url("https://example.com")
+        assert is_broken is False
+
+    def test_falls_back_to_get_on_405(self):
+        with patch("fillnel.steps.link_check.requests.head", return_value=self._mock_head(405)):
+            with patch("fillnel.steps.link_check.requests.get", return_value=self._mock_head(404)) as mock_get:
+                is_broken, _ = _check_url("https://example.com")
+        assert is_broken is True
+        mock_get.assert_called_once()
+
+    def test_returns_not_broken_on_request_exception(self):
+        import requests as req
+        with patch("fillnel.steps.link_check.requests.head", side_effect=req.RequestException("timeout")):
+            is_broken, _ = _check_url("https://example.com")
+        assert is_broken is False
+
+
+class TestLinkCheck:
+    @pytest.fixture(autouse=True)
+    def no_sleep(self, monkeypatch):
+        monkeypatch.setattr("fillnel.steps.link_check.time.sleep", lambda _: None)
+
+    def test_skips_unsorted_collection(self):
+        client = MagicMock()
+        client.get_bookmarks.return_value = [UNSORTED_ITEM]
+        with patch("fillnel.steps.link_check._check_url") as mock_check:
+            link_check.run(client, BROKEN_ID)
+        mock_check.assert_not_called()
+
+    def test_skips_broken_link_collection(self):
+        client = MagicMock()
+        client.get_bookmarks.return_value = [BROKEN_ITEM]
+        with patch("fillnel.steps.link_check._check_url") as mock_check:
+            link_check.run(client, BROKEN_ID)
+        mock_check.assert_not_called()
+
+    def test_moves_broken_link_to_collection(self):
+        client = MagicMock()
+        client.get_bookmarks.return_value = [NORMAL_ITEM]
+        with patch("fillnel.steps.link_check._check_url", return_value=(True, "HTTP 404")):
+            link_check.run(client, BROKEN_ID)
+        client.update_bookmark.assert_called_once_with(1, {"collection": {"$id": BROKEN_ID}})
+
+    def test_does_not_move_live_links(self):
+        client = MagicMock()
+        client.get_bookmarks.return_value = [NORMAL_ITEM]
+        with patch("fillnel.steps.link_check._check_url", return_value=(False, "")):
+            link_check.run(client, BROKEN_ID)
+        client.update_bookmark.assert_not_called()
+
+    def test_skips_items_without_url(self):
+        client = MagicMock()
+        client.get_bookmarks.return_value = [{"_id": 9, "link": "", "collection": {"$id": 10}}]
+        with patch("fillnel.steps.link_check._check_url") as mock_check:
+            link_check.run(client, BROKEN_ID)
+        mock_check.assert_not_called()

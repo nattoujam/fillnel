@@ -1,3 +1,11 @@
+"""
+学習ステップ単体実行エントリポイント。
+
+実行方法:
+  poetry run fillnel-learn           # タグなし記事のみ処理
+  poetry run fillnel-learn --force   # 全件タグを再推定
+"""
+import argparse
 import logging
 import sys
 
@@ -5,8 +13,8 @@ from dotenv import load_dotenv
 from rich.logging import RichHandler
 
 from fillnel.services.gemini import create_gemini_client
-from fillnel.services.raindrop import UNSORTED_COLLECTION_ID, create_raindrop_client
-from fillnel.steps import FAVORITE_COLLECTION, cleanup, collect, learn, register
+from fillnel.services.raindrop import create_raindrop_client
+from fillnel.steps import FAVORITE_COLLECTION, learn
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -14,7 +22,6 @@ logging.basicConfig(
     datefmt="[%X]",
     handlers=[RichHandler(rich_tracebacks=True, markup=True)],
 )
-# サードパーティの詳細ログを抑制
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("google").setLevel(logging.WARNING)
@@ -24,18 +31,20 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="fillnel 学習ステップ")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="タグ付き記事も含め全件タグを再推定する",
+    )
+    args = parser.parse_args()
+
     load_dotenv()
     raindrop = create_raindrop_client()
     gemini = create_gemini_client()
 
     favorite_id = raindrop.get_or_create_collection(FAVORITE_COLLECTION)
-
-    logger.info("=== fillnel バッチ開始 ===")
-    learn.run(raindrop, gemini, favorite_id)
-    cleanup.run(raindrop, UNSORTED_COLLECTION_ID)
-    articles = collect.run(gemini)
-    register.run(raindrop, articles, UNSORTED_COLLECTION_ID)
-    logger.info("=== fillnel バッチ完了 ===")
+    learn.run(raindrop, gemini, favorite_id, force=args.force)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,9 @@ class BookmarkClient(ABC):
     def get_tags(self) -> list[str]: ...
 
     @abstractmethod
+    def get_or_create_collection(self, name: str) -> int: ...
+
+    @abstractmethod
     def get_bookmarks(self, collection_id: int | None = None, tag: str | None = None, not_tag: str | None = None) -> list[dict]: ...
 
     @abstractmethod
@@ -36,6 +39,16 @@ class RaindropClient(BookmarkClient):
         resp.raise_for_status()
         data = resp.json()
         return [item["_id"] for item in data.get("items", [])]
+
+    def get_or_create_collection(self, name: str) -> int:
+        resp = self._session.get(f"{self.BASE_URL}/collections")
+        resp.raise_for_status()
+        for col in resp.json().get("items", []):
+            if col["title"] == name:
+                return col["_id"]
+        resp = self._session.post(f"{self.BASE_URL}/collection", json={"title": name})
+        resp.raise_for_status()
+        return resp.json()["item"]["_id"]
 
     def get_bookmarks(self, collection_id: int | None = None, tag: str | None = None, not_tag: str | None = None) -> list[dict]:
         results = []

@@ -1,11 +1,11 @@
 import concurrent.futures
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from google.genai.errors import ClientError, ServerError
 from tenacity import RetryError
 
-from fillnel.services.gemini import GeminiClient, _extract_articles, _resolve_url
+from fillnel.services.gemini import GeminiClient, _extract_articles, _extract_retry_delay, _parse_tags, _resolve_url
 import fillnel.services.gemini as gemini_module
 
 
@@ -122,3 +122,98 @@ class TestCollectArticles:
 
         with pytest.raises(RuntimeError, match="サーバーエラー"):
             client.collect_articles(["AI"])
+
+
+class TestExtractRetryDelay:
+    def test_parses_retry_delay_from_error(self):
+        e = ClientError(429, {"error": {"code": 429, "message": "", "status": "RESOURCE_EXHAUSTED", "details": [
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "57s"},
+        ]}})
+        assert _extract_retry_delay(e) == 62.0  # 57 + 5
+
+    def test_returns_default_when_no_detail(self):
+        e = ClientError(429, {"error": {"code": 429, "message": "", "status": "RESOURCE_EXHAUSTED", "details": []}})
+        assert _extract_retry_delay(e) == 65.0
+
+
+class TestParseTags:
+    def _resp(self, text: str) -> MagicMock:
+        r = MagicMock()
+        r.text = text
+        return r
+
+    def test_parses_raw_json_array(self):
+        result = _parse_tags(self._resp('["AI", "TypeScript", "自己ホスト"]'))
+        assert result == ["AI", "TypeScript", "自己ホスト"]
+
+    def test_parses_markdown_code_block(self):
+        result = _parse_tags(self._resp('```json\n["AI", "TypeScript"]\n```'))
+        assert result == ["AI", "TypeScript"]
+
+    def test_returns_empty_on_invalid_json(self):
+        result = _parse_tags(self._resp("タグは見つかりませんでした"))
+        assert result == []
+
+
+class TestEstimateTags:
+    def _make_client(self, response_text: str) -> GeminiClient:
+        client = GeminiClient.__new__(GeminiClient)
+        resp = MagicMock()
+        resp.text = response_text
+        client._generate_text = MagicMock(return_value=resp)
+        return client
+
+    def test_returns_parsed_tags(self):
+        client = self._make_client('["AI", "機械学習"]')
+        result = client.estimate_tags(
+            title="AIの最新動向",
+            url="https://example.com/ai",
+            existing_tags=["AI", "TypeScript"],
+        )
+        assert result == ["AI", "機械学習"]
+
+    def test_includes_title_and_url_in_prompt(self):
+        client = self._make_client('["AI"]')
+        client.estimate_tags(
+            title="AIの最新動向",
+            url="https://example.com/ai",
+            existing_tags=[],
+        )
+        prompt = client._generate_text.call_args[0][0]
+        assert "AIの最新動向" in prompt
+        assert "https://example.com/ai" in prompt
+
+    def test_returns_empty_on_client_error(self):
+        client = GeminiClient.__new__(GeminiClient)
+        client._generate_text = MagicMock(side_effect=make_client_error(403))
+        result = client.estimate_tags("title", "https://example.com", [])
+        assert result == []
+
+    def test_returns_empty_on_retry_error(self):
+        client = GeminiClient.__new__(GeminiClient)
+        f = concurrent.futures.Future()
+        f.set_exception(make_server_error(503))
+        client._generate_text = MagicMock(side_effect=RetryError(f))
+        result = client.estimate_tags("title", "https://example.com", [])
+        assert result == []
+
+    def test_retries_on_429_and_succeeds(self):
+        client = GeminiClient.__new__(GeminiClient)
+        resp = MagicMock()
+        resp.text = '["AI"]'
+        client._generate_text = MagicMock(side_effect=[
+            make_client_error(429),
+            resp,
+        ])
+        with patch("fillnel.services.gemini.time.sleep"):
+            result = client.estimate_tags("title", "https://example.com", [])
+        assert result == ["AI"]
+        assert client._generate_text.call_count == 2
+
+    def test_returns_empty_after_max_429_retries(self):
+        client = GeminiClient.__new__(GeminiClient)
+        client._generate_text = MagicMock(side_effect=make_client_error(429))
+        with patch("fillnel.services.gemini.time.sleep"):
+            result = client.estimate_tags("title", "https://example.com", [])
+        assert result == []
+        assert client._generate_text.call_count == 3

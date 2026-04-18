@@ -6,11 +6,12 @@ from fillnel.services import profile as profile_svc
 logger = logging.getLogger(__name__)
 
 MAX_ARTICLES = 10
+TOP_TOPICS = 5
 
 
 def run(gemini: GeminiClient) -> list[dict]:
     profile = profile_svc.load()
-    topics = profile_svc.top_tags(profile, n=5)
+    topics = profile_svc.top_tags(profile, n=TOP_TOPICS)
     logger.info(f"collect: 興味トピック = {topics}")
 
     articles = gemini.collect_articles(topics)
