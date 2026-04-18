@@ -13,6 +13,8 @@ def run(client: BookmarkClient, articles: list[dict], collection_id: int) -> Non
             "excerpt": article.get("summary", ""),
             "collection": {"$id": collection_id},
         }
+        if title := article.get("title"):
+            bookmark["title"] = title
         client.create_bookmark(bookmark)
         logger.info(f"register: 登録 {article['url']}")
     logger.info("register: 完了")

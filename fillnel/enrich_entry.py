@@ -1,9 +1,10 @@
 """
-学習ステップ単体実行エントリポイント。
+エンリッチステップ単体実行エントリポイント。
+お気に入りフォルダの記事にexcerpt・タグを付与し、プロファイルを更新する。
 
 実行方法:
-  poetry run fillnel-learn           # タグなし記事のみ処理
-  poetry run fillnel-learn --force   # 全件タグを再推定
+  poetry run fillnel-enrich           # タグなし記事のみ処理 + プロファイル更新
+  poetry run fillnel-enrich --force   # 全件タグを再推定 + プロファイル更新
 """
 import argparse
 import logging
@@ -14,7 +15,7 @@ from rich.logging import RichHandler
 
 from fillnel.services.gemini import create_gemini_client
 from fillnel.services.raindrop import create_raindrop_client
-from fillnel.steps import FAVORITE_COLLECTION, learn
+from fillnel.steps import FAVORITE_COLLECTION, enrich, rebuild_profile
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="fillnel 学習ステップ")
+    parser = argparse.ArgumentParser(description="fillnel エンリッチステップ")
     parser.add_argument(
         "--force",
         action="store_true",
@@ -44,7 +45,8 @@ def main() -> None:
     gemini = create_gemini_client()
 
     favorite_id = raindrop.get_or_create_collection(FAVORITE_COLLECTION)
-    learn.run(raindrop, gemini, favorite_id, force=args.force)
+    enrich.run(raindrop, gemini, favorite_id, force=args.force)
+    rebuild_profile.run(raindrop, favorite_id)
 
 
 if __name__ == "__main__":

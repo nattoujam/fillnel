@@ -17,9 +17,10 @@ dependencies = [
 
 [project.scripts]
 fillnel = "fillnel.main:main"
-fillnel-learn = "fillnel.learn_entry:main"
+fillnel-enrich = "fillnel.enrich_entry:main"
+fillnel-rebuild-profile = "fillnel.rebuild_profile_entry:main"
 fillnel-profile = "fillnel.profile_entry:main"
-fillnel-link-check = "fillnel.link_check_entry:main"
+fillnel-check-links = "fillnel.check_links_entry:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

@@ -28,7 +28,7 @@ def _check_url(url: str) -> tuple[bool, str]:
             return True, f"HTTP {resp.status_code}"
         return False, ""
     except requests.RequestException as e:
-        logger.warning(f"link_check: URL確認エラー（スキップ）: {url[:80]} - {e}")
+        logger.warning(f"check_links: URL確認エラー（スキップ）: {url[:80]} - {e}")
         return False, ""
 
 
@@ -41,10 +41,10 @@ def run(raindrop: BookmarkClient, broken_collection_id: int) -> None:
     ]
 
     if not targets:
-        logger.info("link_check: チェック対象の記事なし")
+        logger.info("check_links: チェック対象の記事なし")
         return
 
-    logger.info(f"link_check: {len(targets)}件をチェックします")
+    logger.info(f"check_links: {len(targets)}件をチェックします")
     broken_count = 0
 
     for item in targets:
@@ -55,9 +55,9 @@ def run(raindrop: BookmarkClient, broken_collection_id: int) -> None:
         is_broken, reason = _check_url(url)
         if is_broken:
             raindrop.update_bookmark(item["_id"], {"collection": {"$id": broken_collection_id}})
-            logger.info(f"link_check: リンク切れ [{reason}] {url}")
+            logger.info(f"check_links: リンク切れ [{reason}] {url}")
             broken_count += 1
 
         time.sleep(INTER_REQUEST_DELAY)
 
-    logger.info(f"link_check: 完了 — {broken_count}件のリンク切れを検出")
+    logger.info(f"check_links: 完了 — {broken_count}件のリンク切れを検出")

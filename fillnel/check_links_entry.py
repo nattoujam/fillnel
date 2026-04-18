@@ -2,7 +2,7 @@
 リンク切れ検出バッチ。
 
 実行方法:
-  poetry run fillnel-link-check
+  poetry run fillnel-check-links
 """
 import logging
 import sys
@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from rich.logging import RichHandler
 
 from fillnel.services.raindrop import create_raindrop_client
-from fillnel.steps import BROKEN_LINK_COLLECTION, link_check
+from fillnel.steps import BROKEN_LINK_COLLECTION, check_links
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -30,7 +30,7 @@ def main() -> None:
     load_dotenv()
     raindrop = create_raindrop_client()
     broken_id = raindrop.get_or_create_collection(BROKEN_LINK_COLLECTION)
-    link_check.run(raindrop, broken_id)
+    check_links.run(raindrop, broken_id)
 
 
 if __name__ == "__main__":

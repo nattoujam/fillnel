@@ -1,12 +1,18 @@
+"""
+プロファイル再構築ステップ単体実行エントリポイント。
+Gemini呼び出しなしで、現在のお気に入り全件からプロファイルを再構築する。
+
+実行方法:
+  poetry run fillnel-rebuild-profile
+"""
 import logging
 import sys
 
 from dotenv import load_dotenv
 from rich.logging import RichHandler
 
-from fillnel.services.gemini import create_gemini_client
-from fillnel.services.raindrop import UNSORTED_COLLECTION_ID, create_raindrop_client
-from fillnel.steps import FAVORITE_COLLECTION, cleanup, collect, enrich, rebuild_profile, register
+from fillnel.services.raindrop import create_raindrop_client
+from fillnel.steps import FAVORITE_COLLECTION, rebuild_profile
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -14,10 +20,8 @@ logging.basicConfig(
     datefmt="[%X]",
     handlers=[RichHandler(rich_tracebacks=True, markup=True)],
 )
-# サードパーティの詳細ログを抑制
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("google").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
@@ -26,17 +30,9 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     load_dotenv()
     raindrop = create_raindrop_client()
-    gemini = create_gemini_client()
 
     favorite_id = raindrop.get_or_create_collection(FAVORITE_COLLECTION)
-
-    logger.info("=== fillnel バッチ開始 ===")
-    enrich.run(raindrop, gemini, favorite_id)
-    favorites = rebuild_profile.run(raindrop, favorite_id)
-    cleanup.run(raindrop, UNSORTED_COLLECTION_ID)
-    articles = collect.run(gemini, favorites)
-    register.run(raindrop, articles, UNSORTED_COLLECTION_ID)
-    logger.info("=== fillnel バッチ完了 ===")
+    rebuild_profile.run(raindrop, favorite_id)
 
 
 if __name__ == "__main__":

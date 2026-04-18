@@ -33,12 +33,21 @@ COLLECT_PROMPT = """\
 - 新製品発表・リリース情報のみのニュース記事
 - ガジェット・デバイス紹介記事
 - 業務効率化・ライフハック系の浅い記事
+- YouTube・Vimeoなどの動画コンテンツ
 
-各記事を以下の形式で出力してください：
+{favorites_section}各記事を以下の形式で出力してください：
 
 タイトル: <記事タイトル>
-URL: <記事の正確なURL>
 要約: <50字以内の日本語要約>
+"""
+
+SUMMARIZE_PROMPT = """\
+以下の記事を50字以内の日本語で要約してください。
+
+タイトル: {title}
+URL: {url}
+
+要約のみを返してください（説明不要）。
 """
 
 ESTIMATE_TAGS_PROMPT = """\
@@ -83,7 +92,6 @@ def _resolve_url(url: str) -> str:
 
 _ARTICLE_PATTERN = re.compile(
     r"タイトル[:：]\s*(.+)\n"
-    r"URL[:：]\s*(https?://[^\s\n]+)\n"
     r"要約[:：]\s*(.+)"
 )
 
@@ -94,30 +102,77 @@ def _is_root_url(url: str) -> bool:
     return parsed.path in ("", "/") and not parsed.query
 
 
-def _grounding_domains(candidate) -> set[str]:
-    """grounding_chunksのリダイレクトURLを解決してドメインセットを返す。"""
-    domains: set[str] = set()
-    if not (candidate.grounding_metadata and candidate.grounding_metadata.grounding_chunks):
-        return domains
-    for chunk in candidate.grounding_metadata.grounding_chunks:
-        if chunk.web and chunk.web.uri:
-            resolved = _resolve_url(chunk.web.uri)
-            domain = urlparse(resolved).netloc.removeprefix("www.")
-            if domain:
-                domains.add(domain)
-    return domains
-
-
-def _parse_articles_from_text(text: str, allowed_domains: set[str]) -> list[dict]:
-    """レスポンステキストから構造化記事データをパースし、ドメイン検証する。"""
-    articles = []
-    for title, url, summary in _ARTICLE_PATTERN.findall(text):
-        url = url.rstrip(".,)」）")
-        domain = urlparse(url).netloc.removeprefix("www.")
-        if allowed_domains and domain not in allowed_domains:
-            logger.warning(f"グラウンディング外URLをスキップ: {url} (domain={domain})")
+def _build_position_map(text: str, supports, chunks: list) -> list[tuple[int, int, str]]:
+    """grounding_supportsからバイト位置範囲→chunk URI のマッピングリストを返す。
+    同一位置に複数のsupportが重なる場合は最小セグメントを優先するため、サイズ昇順でソートする。
+    """
+    mappings = []
+    for support in supports:
+        seg = support.segment
+        start = seg.start_index or 0
+        end = seg.end_index or 0
+        if start >= end or not support.grounding_chunk_indices:
             continue
-        articles.append({"url": url, "title": title.strip(), "summary": summary.strip()})
+        scores = support.confidence_scores or [1.0] * len(support.grounding_chunk_indices)
+        best_i = max(range(len(scores)), key=lambda i: scores[i])
+        chunk_idx = support.grounding_chunk_indices[best_i]
+        if chunk_idx < len(chunks) and chunks[chunk_idx].web and chunks[chunk_idx].web.uri:
+            mappings.append((start, end, chunks[chunk_idx].web.uri))
+    mappings.sort(key=lambda m: m[1] - m[0])  # セグメントサイズ昇順（小さい=具体的）
+    return mappings
+
+
+def _uri_at_char_pos(char_pos: int, text: str, mappings: list[tuple[int, int, str]]) -> str | None:
+    """文字位置に対応するchunk URIを最小セグメントから返す。"""
+    byte_pos = len(text[:char_pos].encode("utf-8"))
+    for start, end, uri in mappings:
+        if start <= byte_pos < end:
+            return uri
+    return None
+
+
+def _uri_by_chunk_title(title: str, chunks: list, exclude: set[str]) -> str | None:
+    """chunk.web.titleとの包含関係でURIを返す（重複解消フォールバック）。"""
+    for chunk in chunks:
+        if not (chunk.web and chunk.web.uri and chunk.web.title):
+            continue
+        if chunk.web.uri in exclude:
+            continue
+        ct = chunk.web.title
+        if title in ct or ct in title:
+            return chunk.web.uri
+    return None
+
+
+def _parse_articles_with_grounding(text: str, candidate) -> list[dict]:
+    """grounding_supportsを使ってタイトル・要約・URLを抽出する。
+    位置ベースマッチ（優先）→ chunk.web.titleマッチ（重複・未発見時）の順で解決する。
+    """
+    chunks = list(candidate.grounding_metadata.grounding_chunks) \
+        if candidate.grounding_metadata and candidate.grounding_metadata.grounding_chunks else []
+    supports = list(candidate.grounding_metadata.grounding_supports) \
+        if candidate.grounding_metadata and candidate.grounding_metadata.grounding_supports else []
+
+    logger.debug(f"grounding_chunks: {len(chunks)} 件, grounding_supports: {len(supports)} 件")
+
+    mappings = _build_position_map(text, supports, chunks)
+    used_urls: set[str] = set()
+    articles = []
+
+    for match in _ARTICLE_PATTERN.finditer(text):
+        title = match.group(1).strip()
+        summary = match.group(2).strip()
+
+        url = _uri_at_char_pos(match.start(), text, mappings)
+        if url is None or url in used_urls:
+            url = _uri_by_chunk_title(title, chunks, exclude=used_urls)
+
+        if url:
+            used_urls.add(url)
+            articles.append({"title": title, "url": url, "summary": summary})
+        else:
+            logger.warning(f"grounding_supportsにURLが見つかりませんでした: {title}")
+
     return articles
 
 
@@ -135,22 +190,20 @@ def _extract_from_chunks(candidate) -> list[dict]:
                 logger.warning(f"ルートURLのためスキップ: {chunk.web.uri[:60]}... → {real_url}")
                 continue
             logger.debug(f"URL解決: {chunk.web.uri[:60]}... → {real_url}")
-            chunks.append({"url": real_url, "summary": ""})
+            chunks.append({"url": real_url, "title": chunk.web.title or "", "summary": ""})
     return chunks
 
 
 def _extract_articles(response) -> list[dict]:
-    """レスポンステキストをパース（優先）し、失敗時は grounding_chunks にフォールバック。"""
+    """grounding_supportsで記事を抽出し、失敗時はgrounding_chunksにフォールバック。"""
     candidate = response.candidates[0]
-    domains = _grounding_domains(candidate)
-    logger.debug(f"grounding domains: {domains}")
 
-    articles = _parse_articles_from_text(response.text, domains)
+    articles = _parse_articles_with_grounding(response.text, candidate)
     if articles:
-        logger.debug(f"テキストパースで {len(articles)} 件取得")
+        logger.debug(f"grounding_supportsで {len(articles)} 件取得")
         return articles
 
-    logger.warning("テキストパース失敗、grounding_chunksにフォールバック")
+    logger.warning("grounding_supportsでの取得失敗、grounding_chunksにフォールバック")
     chunks = _extract_from_chunks(candidate)
     logger.debug(f"grounding_chunks から {len(chunks)} 件取得")
     return chunks
@@ -205,7 +258,19 @@ class GeminiClient:
             contents=prompt,
         )
 
-    def collect_articles(self, tag_weights: dict[str, float], domains: list[str]) -> list[dict]:
+    def summarize_article(self, title: str, url: str) -> str:
+        """記事タイトルとURLから50字以内の要約を生成する。失敗時は空文字列を返す。"""
+        prompt = SUMMARIZE_PROMPT.format(title=title, url=url)
+        logger.debug(f"[summarize] model={TAG_MODEL} request prompt:\n{prompt}")
+        try:
+            response = self._generate_text(prompt)
+            logger.debug(f"[summarize] response:\n{response.text}")
+            return response.text.strip()
+        except Exception as e:
+            logger.warning(f"要約生成失敗 ({url}): {e}")
+            return ""
+
+    def collect_articles(self, tag_weights: dict[str, float], domains: list[str], favorites: list[dict] | None = None) -> list[dict]:
         if tag_weights:
             topics_str = ", ".join(
                 f"{t} ({w:.1f})"
@@ -216,11 +281,19 @@ class GeminiClient:
         domains_section = (
             f"\n好みのドメイン（参考）:\n{', '.join(domains)}\n" if domains else ""
         )
-        prompt = COLLECT_PROMPT.format(topics=topics_str, domains_section=domains_section)
-        logger.debug(f"Gemini request prompt:\n{prompt}")
+        if favorites:
+            items_str = "\n".join(
+                f"- {f['title']}: {f['excerpt']}"
+                for f in favorites if f.get("excerpt")
+            )
+            favorites_section = f"参考（最近のお気に入り記事・好みのスタイルの参考として）:\n{items_str}\n\n" if items_str else ""
+        else:
+            favorites_section = ""
+        prompt = COLLECT_PROMPT.format(topics=topics_str, domains_section=domains_section, favorites_section=favorites_section)
+        logger.debug(f"[collect] model={MODEL} request prompt:\n{prompt}")
         try:
             response = self._generate(prompt)
-            logger.debug(f"Gemini response:\n{response.text}")
+            logger.debug(f"[collect] response:\n{response.text}")
         except ClientError as e:
             if e.code in (400, 403):
                 raise RuntimeError(
@@ -250,11 +323,11 @@ class GeminiClient:
             title=title,
             url=url,
         )
-        logger.debug(f"タグ推定 prompt:\n{prompt}")
+        logger.debug(f"[estimate_tags] model={TAG_MODEL} request prompt:\n{prompt}")
         for attempt in range(3):
             try:
                 response = self._generate_text(prompt)
-                logger.debug(f"タグ推定 response:\n{response.text}")
+                logger.debug(f"[estimate_tags] response:\n{response.text}")
                 return _parse_tags(response)
             except ClientError as e:
                 if e.code == 429 and attempt < 2:
