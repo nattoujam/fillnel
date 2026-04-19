@@ -6,4 +6,5 @@ Requires=docker.service
 [Service]
 Type=oneshot
 WorkingDirectory=/home/euclase/Code/fillnel
-ExecStart=/usr/bin/docker compose run --rm batch
+ExecStart=/usr/bin/docker compose up
+ExecStartPost=/usr/bin/docker compose stop
