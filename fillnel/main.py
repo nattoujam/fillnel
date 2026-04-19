@@ -20,7 +20,7 @@ def _run() -> None:
 
     logger.info("=== fillnel バッチ開始 ===")
     enrich.run(raindrop, gemini, favorite_id)
-    favorites = rebuild_profile.run(raindrop, favorite_id)
+    favorites = rebuild_profile.run(raindrop, gemini, favorite_id)
     cleanup.run(raindrop, UNSORTED_COLLECTION_ID)
     articles = collect.run(gemini, favorites)
     register.run(raindrop, articles, UNSORTED_COLLECTION_ID)

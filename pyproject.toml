@@ -11,7 +11,10 @@ dependencies = [
     "google-genai (>=1.73.1,<2.0.0)",
     "requests (>=2.33.1,<3.0.0)",
     "python-dotenv (>=1.2.2,<2.0.0)",
-    "rich (>=15.0.0,<16.0.0)"
+    "rich (>=15.0.0,<16.0.0)",
+    "feedparser (>=6.0.11,<7.0.0)",
+    "numpy (>=2.0.0,<3.0.0)",
+    "pyyaml (>=6.0.2,<7.0.0)"
 ]
 
 
@@ -21,6 +24,7 @@ fillnel-enrich = "fillnel.enrich_entry:main"
 fillnel-rebuild-profile = "fillnel.rebuild_profile_entry:main"
 fillnel-profile = "fillnel.profile_entry:main"
 fillnel-check-links = "fillnel.check_links_entry:main"
+fillnel-feeds = "fillnel.feeds_entry:main"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

@@ -15,6 +15,29 @@ logger = logging.getLogger(__name__)
 
 MODEL = "gemini-2.5-flash"
 TAG_MODEL = "gemini-3.1-flash-lite-preview"
+EMBED_MODEL = "gemini-embedding-001"
+
+FILTER_PROMPT = """\
+以下の記事候補から、ユーザーの興味に合う高品質な記事を最大5件選んでください。
+{favorites_section}
+記事候補:
+{candidates_section}
+優先条件（以下に該当する記事を優先すること）：
+- 技術的な実装・設計・考察を含む記事
+- 著者の一次情報・独自検証・実体験にもとづく記事
+- 具体的なコード・手順・数値を含む記事
+
+除外条件（以下に該当する記事は絶対に選ばないこと）：
+- AIが自動生成した記事
+- ランキング・おすすめ商品・まとめ系の記事（独自の考察がないもの）
+- 新製品発表・リリース情報のみのニュース記事
+- ガジェット・デバイス紹介記事
+- 業務効率化・ライフハック系の浅い記事
+- YouTube・Vimeoなどの動画コンテンツ
+
+選んだ記事の番号をカンマ区切りで返してください（例: 1, 3, 5）。
+数字のみで返してください。
+"""
 
 COLLECT_PROMPT = """\
 以下の情報をもとに、ユーザーの興味に合った最近の技術記事を5件探してください。
@@ -237,8 +260,11 @@ def _parse_tags(response) -> list[str]:
 
 
 class GeminiClient:
+    _EMBED_INTERVAL = 60.0 / 90  # 90 req/min (free tier limit: 100/min)
+
     def __init__(self, api_key: str):
         self._client = genai.Client(api_key=api_key)
+        self._last_embed_time: float = 0.0
 
     @_retry_server_error
     def _generate(self, prompt: str):
@@ -316,6 +342,81 @@ class GeminiClient:
             ) from e
 
         return _extract_articles(response)
+
+    def embed_text(self, text: str) -> list[float]:
+        """テキストを Embedding ベクトルに変換する。"""
+        logger.debug(f"[embed] model={EMBED_MODEL} text={text[:80]!r}")
+        wait = self._EMBED_INTERVAL - (time.time() - self._last_embed_time)
+        if wait > 0:
+            time.sleep(wait)
+        self._last_embed_time = time.time()
+        for attempt in range(3):
+            try:
+                result = self._client.models.embed_content(
+                    model=EMBED_MODEL,
+                    contents=text,
+                )
+                vec = result.embeddings[0].values
+                logger.debug(f"[embed] dim={len(vec)}")
+                return vec
+            except ClientError as e:
+                if e.code == 429 and attempt < 2:
+                    delay = _extract_retry_delay(e)
+                    logger.warning(f"レートリミット (429)、{delay:.0f}秒後にリトライします... ({attempt + 1}/3)")
+                    time.sleep(delay)
+                    continue
+                raise
+        return []
+
+    def filter_articles(self, candidates: list[dict], favorites: list[dict] | None = None) -> list[dict]:
+        """Embedding上位候補をGemini（Groundingなし）で質フィルタリングする。
+        レスポンスの番号から candidates のエントリを返すためURLはLLMに生成させない。
+        失敗時は candidates の先頭5件をそのまま返す。
+        """
+        if not candidates:
+            return []
+
+        lines = []
+        for i, c in enumerate(candidates, 1):
+            lines.append(f"[{i}] タイトル: {c.get('title', '')}")
+            if c.get("excerpt"):
+                lines.append(f"    要約: {c['excerpt'][:100]}")
+        candidates_section = "\n".join(lines)
+
+        if favorites:
+            items_str = "\n".join(
+                f"- {f['title']}: {f.get('excerpt', '')}"
+                for f in favorites if f.get("excerpt")
+            )
+            favorites_section = f"参考（最近のお気に入り記事）:\n{items_str}\n" if items_str else ""
+        else:
+            favorites_section = ""
+
+        prompt = FILTER_PROMPT.format(
+            favorites_section=favorites_section,
+            candidates_section=candidates_section,
+        )
+        logger.debug(f"[filter] model={TAG_MODEL} request prompt:\n{prompt}")
+        try:
+            response = self._generate_text(prompt)
+            logger.debug(f"[filter] response:\n{response.text}")
+        except Exception as e:
+            logger.warning(f"フィルタリング失敗、候補先頭5件を返します: {e}")
+            return candidates[:5]
+
+        indices = []
+        for part in re.split(r"[,\s]+", response.text.strip()):
+            part = part.strip()
+            if part.isdigit():
+                idx = int(part) - 1
+                if 0 <= idx < len(candidates) and idx not in indices:
+                    indices.append(idx)
+
+        if not indices:
+            logger.warning("フィルタリングレスポンス解析失敗、候補先頭5件を返します")
+            return candidates[:5]
+
+        return [candidates[i] for i in indices]
 
     def estimate_tags(self, title: str, url: str, existing_tags: list[str]) -> list[str]:
         prompt = ESTIMATE_TAGS_PROMPT.format(
