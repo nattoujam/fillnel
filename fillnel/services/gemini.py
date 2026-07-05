@@ -13,8 +13,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 logger = logging.getLogger(__name__)
 
-MODEL = "gemini-2.5-flash"
-TAG_MODEL = "gemini-3.1-flash-lite-preview"
+MODEL = "gemini-3.1-flash-lite"
+TAG_MODEL = "gemini-3.1-flash-lite"
 EMBED_MODEL = "gemini-embedding-001"
 
 FILTER_PROMPT = """\
