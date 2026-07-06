@@ -11,14 +11,16 @@ from google.genai import types
 from google.genai.errors import ClientError, ServerError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, RetryError
 
+from fillnel.config import GEMINI_MODEL, GEMINI_TAG_MODEL, GEMINI_EMBED_MODEL, MAX_ARTICLES
+
 logger = logging.getLogger(__name__)
 
-MODEL = "gemini-3.1-flash-lite"
-TAG_MODEL = "gemini-3.1-flash-lite"
-EMBED_MODEL = "gemini-embedding-001"
+MODEL = GEMINI_MODEL
+TAG_MODEL = GEMINI_TAG_MODEL
+EMBED_MODEL = GEMINI_EMBED_MODEL
 
 FILTER_PROMPT = """\
-以下の記事候補から、ユーザーの興味に合う高品質な記事を最大5件選んでください。
+以下の記事候補から、ユーザーの興味に合う高品質な記事を最大{max_count}件選んでください。
 {favorites_section}
 記事候補:
 {candidates_section}
@@ -371,7 +373,7 @@ class GeminiClient:
     def filter_articles(self, candidates: list[dict], favorites: list[dict] | None = None) -> list[dict]:
         """Embedding上位候補をGemini（Groundingなし）で質フィルタリングする。
         レスポンスの番号から candidates のエントリを返すためURLはLLMに生成させない。
-        失敗時は candidates の先頭5件をそのまま返す。
+        失敗時は candidates の先頭MAX_ARTICLES件をそのまま返す。
         """
         if not candidates:
             return []
@@ -393,6 +395,7 @@ class GeminiClient:
             favorites_section = ""
 
         prompt = FILTER_PROMPT.format(
+            max_count=MAX_ARTICLES,
             favorites_section=favorites_section,
             candidates_section=candidates_section,
         )
@@ -401,8 +404,8 @@ class GeminiClient:
             response = self._generate_text(prompt)
             logger.debug(f"[filter] response:\n{response.text}")
         except Exception as e:
-            logger.warning(f"フィルタリング失敗、候補先頭5件を返します: {e}")
-            return candidates[:5]
+            logger.warning(f"フィルタリング失敗、候補先頭{MAX_ARTICLES}件を返します: {e}")
+            return candidates[:MAX_ARTICLES]
 
         indices = []
         for part in re.split(r"[,\s]+", response.text.strip()):
@@ -413,8 +416,8 @@ class GeminiClient:
                     indices.append(idx)
 
         if not indices:
-            logger.warning("フィルタリングレスポンス解析失敗、候補先頭5件を返します")
-            return candidates[:5]
+            logger.warning("フィルタリングレスポンス解析失敗、候補先頭{MAX_ARTICLES}件を返します")
+            return candidates[:MAX_ARTICLES]
 
         return [candidates[i] for i in indices]
 
