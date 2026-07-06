@@ -26,9 +26,12 @@ def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: 
     current_urls: set[str] = set()
     vecs: list[list[float]] = []
     favorites: list[dict] = []
-    new_count = 0
 
-    for item in items:
+    # 1パス目: キャッシュ確認と新規Embedding対象のテキスト収集
+    uncached_items: list[tuple[str, str, str]] = []  # (url, content_hash, text)
+    uncached_indices: list[int] = []  # vecsリスト内のインデックス
+
+    for idx, item in enumerate(items):
         tags = item.get("tags", [])
         profile_svc.increment(profile, tags)
 
@@ -50,20 +53,30 @@ def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: 
         cached = cache.get(url, {})
 
         if cached.get("hash") == content_hash:
-            vec = cached["vector"]
+            vecs.append(cached["vector"])
         else:
-            vec = gemini.embed_text(text)
+            uncached_items.append((url, content_hash, text))
+            uncached_indices.append(len(vecs))
+            vecs.append(None)  # プレースホルダー
+
+    # 2パス目: 新規Embeddingを一括で取得
+    new_count = 0
+    if uncached_items:
+        texts = [t for _, _, t in uncached_items]
+        new_vecs = gemini.embed_texts(texts)
+        for i, (url, content_hash, _), vec in zip(uncached_indices, uncached_items, new_vecs):
+            vecs[i] = vec
             cache[url] = {"hash": content_hash, "vector": vec}
             new_count += 1
 
-        vecs.append(vec)
-
     # お気に入りから外れた記事のキャッシュを削除
-    for stale_url in [k for k in cache if k not in current_urls]:
+    for stale_url in [url for url in cache if url not in current_urls]:
         del cache[stale_url]
 
-    if vecs:
-        profile["profile_vector"] = np.mean(vecs, axis=0).tolist()
+    # None（未処理）を除外して平均を計算
+    valid_vecs = [v for v in vecs if v is not None]
+    if valid_vecs:
+        profile["profile_vector"] = np.mean(valid_vecs, axis=0).tolist()
     else:
         profile.pop("profile_vector", None)
 

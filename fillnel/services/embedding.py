@@ -18,7 +18,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
 def score_articles(articles: list[dict], profile_vector: list[float] | None, client) -> list[dict]:
     """articles に "_score" を付与してコサイン類似度降順で返す。
-    client は embed_text(text: str) -> list[float] を持つ任意のオブジェクト。
+    client は embed_texts(texts: list[str]) -> list[list[float]] を持つ任意のオブジェクト。
     profile_vector は rebuild_profile ステップで事前計算・キャッシュされたもの。
     None または空の場合はスコアリングをスキップして元リストをそのまま返す。
     """
@@ -26,9 +26,10 @@ def score_articles(articles: list[dict], profile_vector: list[float] | None, cli
         logger.info("profile_vectorがないためスコアリングをスキップ")
         return articles
 
-    for article in articles:
-        text = f"{article.get('title', '')} {article.get('excerpt', '')}".strip()
-        vec = client.embed_text(text)
+    texts = [f"{a.get('title', '')} {a.get('excerpt', '')}".strip() for a in articles]
+    vecs = client.embed_texts(texts)
+
+    for article, vec in zip(articles, vecs):
         article["_score"] = cosine_similarity(vec, profile_vector)
 
     return sorted(articles, key=lambda a: a.get("_score", 0.0), reverse=True)

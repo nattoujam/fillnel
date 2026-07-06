@@ -143,7 +143,7 @@ class TestRebuildProfile:
 
     def _make_gemini(self, vec=None):
         gemini = MagicMock()
-        gemini.embed_text.return_value = vec or [1.0, 0.0]
+        gemini.embed_texts.return_value = [vec or [1.0, 0.0]]
         return gemini
 
     def test_updates_profile_from_tagged_items(self):
@@ -229,7 +229,7 @@ class TestRebuildProfile:
 
         profile = profile_svc.load()
         assert "https://a.com" in profile["embedding_cache"]
-        gemini.embed_text.assert_called_once()
+        gemini.embed_texts.assert_called_once()
 
     def test_uses_cached_embedding_on_second_run(self):
         client = MagicMock()
@@ -240,8 +240,8 @@ class TestRebuildProfile:
         rebuild_profile.run(client, gemini, favorite_collection_id=99)
         rebuild_profile.run(client, gemini, favorite_collection_id=99)
 
-        # 2回実行しても embed_text は1回だけ
-        assert gemini.embed_text.call_count == 1
+        # 2回実行しても embed_texts は1回だけ
+        assert gemini.embed_texts.call_count == 1
 
     def test_purges_stale_cache_entries(self):
         import fillnel.services.profile as profile_svc

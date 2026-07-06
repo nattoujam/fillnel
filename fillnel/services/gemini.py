@@ -11,13 +11,14 @@ from google.genai import types
 from google.genai.errors import ClientError, ServerError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, RetryError
 
-from fillnel.config import GEMINI_MODEL, GEMINI_TAG_MODEL, GEMINI_EMBED_MODEL, MAX_ARTICLES
+from fillnel.config import GEMINI_MODEL, GEMINI_TAG_MODEL, MAX_ARTICLES
 
 logger = logging.getLogger(__name__)
 
 MODEL = GEMINI_MODEL
 TAG_MODEL = GEMINI_TAG_MODEL
-EMBED_MODEL = GEMINI_EMBED_MODEL
+# gemini-embedding-001 と 2 は embedding space が互換ではないため固定
+EMBED_MODEL = "gemini-embedding-001"
 
 FILTER_PROMPT = """\
 以下の記事候補から、ユーザーの興味に合う高品質な記事を最大{max_count}件選んでください。
@@ -262,11 +263,10 @@ def _parse_tags(response) -> list[str]:
 
 
 class GeminiClient:
-    _EMBED_INTERVAL = 60.0 / 90  # 90 req/min (free tier limit: 100/min)
+    _EMBED_INTERVAL = 60.0  # embeddingバッチ間の待機時間
 
     def __init__(self, api_key: str):
         self._client = genai.Client(api_key=api_key)
-        self._last_embed_time: float = 0.0
 
     @_retry_server_error
     def _generate(self, prompt: str):
@@ -345,30 +345,39 @@ class GeminiClient:
 
         return _extract_articles(response)
 
-    def embed_text(self, text: str) -> list[float]:
-        """テキストを Embedding ベクトルに変換する。"""
-        logger.debug(f"[embed] model={EMBED_MODEL} text={text[:80]!r}")
-        wait = self._EMBED_INTERVAL - (time.time() - self._last_embed_time)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_embed_time = time.time()
-        for attempt in range(3):
-            try:
-                result = self._client.models.embed_content(
-                    model=EMBED_MODEL,
-                    contents=text,
-                )
-                vec = result.embeddings[0].values
-                logger.debug(f"[embed] dim={len(vec)}")
-                return vec
-            except ClientError as e:
-                if e.code == 429 and attempt < 2:
-                    delay = _extract_retry_delay(e)
-                    logger.warning(f"レートリミット (429)、{delay:.0f}秒後にリトライします... ({attempt + 1}/3)")
-                    time.sleep(delay)
-                    continue
-                raise
-        return []
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """テキストのリストをまとめて Embedding ベクトルに変換する。
+        API制限（1バッチ最大100リクエスト）のため、100件ずつ分割して呼び出す。
+        """
+        BATCH_SIZE = 100
+        all_vecs: list[list[float]] = []
+
+        for i in range(0, len(texts), BATCH_SIZE):
+            chunk = texts[i:i + BATCH_SIZE]
+            logger.debug(f"[embed_batch] model={EMBED_MODEL} chunk={i // BATCH_SIZE + 1} count={len(chunk)}")
+
+            for attempt in range(3):
+                try:
+                    result = self._client.models.embed_content(
+                        model=EMBED_MODEL,
+                        contents=chunk,
+                    )
+                    all_vecs.extend(e.values for e in result.embeddings)
+                    break
+                except ClientError as e:
+                    if e.code == 429 and attempt < 2:
+                        delay = _extract_retry_delay(e)
+                        logger.warning(f"レートリミット (429)、{delay:.0f}秒後にリトライします... ({attempt + 1}/3)")
+                        time.sleep(delay)
+                        continue
+                    raise
+
+            time.sleep(self._EMBED_INTERVAL)
+
+        logger.debug(f"[embed_batch] total count={len(all_vecs)}")
+        return all_vecs
+
+
 
     def filter_articles(self, candidates: list[dict], favorites: list[dict] | None = None) -> list[dict]:
         """Embedding上位候補をGemini（Groundingなし）で質フィルタリングする。

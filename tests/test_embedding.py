@@ -22,9 +22,12 @@ class TestCosineSimilarity:
 
 
 class TestScoreArticles:
-    def _make_client(self, vec=None):
+    def _make_client(self, vec=None, vecs=None):
         client = MagicMock()
-        client.embed_text.return_value = vec or [1.0, 0.0, 0.0]
+        if vecs is not None:
+            client.embed_texts.return_value = vecs
+        else:
+            client.embed_texts.return_value = [vec or [1.0, 0.0, 0.0]]
         return client
 
     def test_returns_articles_unchanged_when_no_profile_vector(self):
@@ -32,14 +35,14 @@ class TestScoreArticles:
         client = self._make_client()
         result = score_articles(articles, None, client)
         assert result == articles
-        client.embed_text.assert_not_called()
+        client.embed_texts.assert_not_called()
 
     def test_returns_articles_unchanged_when_profile_vector_empty(self):
         articles = [{"title": "A", "url": "https://a.com", "excerpt": ""}]
         client = self._make_client()
         result = score_articles(articles, [], client)
         assert result == articles
-        client.embed_text.assert_not_called()
+        client.embed_texts.assert_not_called()
 
     def test_attaches_score_to_articles(self):
         articles = [{"title": "A", "url": "https://a.com", "excerpt": ""}]
@@ -56,7 +59,8 @@ class TestScoreArticles:
         ]
         profile_vector = [1.0, 0.0]
         client = MagicMock()
-        client.embed_text.side_effect = lambda text: [1.0, 0.0] if "high" in text else [0.0, 1.0]
+        # low=不適合(0.0,1.0), high=適合(1.0,0.0) の順で返す
+        client.embed_texts.side_effect = lambda texts: [[0.0, 1.0], [1.0, 0.0]]
 
         result = score_articles(articles, profile_vector, client)
         assert result[0]["title"] == "high"

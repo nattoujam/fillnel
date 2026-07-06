@@ -43,7 +43,7 @@ FEEDS_PATH = _env_path("FEEDS_PATH", "config/feeds.yml")
 # --- Gemini モデル設定 ---
 GEMINI_MODEL = _env_str("GEMINI_MODEL", "gemini-3.1-flash-lite")    # collect/filter 用モデル
 GEMINI_TAG_MODEL = _env_str("GEMINI_TAG_MODEL", "gemini-3.1-flash-lite")  # タグ推定・要約用モデル
-GEMINI_EMBED_MODEL = _env_str("GEMINI_EMBED_MODEL", "gemini-embedding-001")  # Embedding用モデル
+# Embedding用モデルは embedding space の互換性のためコード内で固定（gemini-embedding-001）
 
 # --- レート制限対策 ---
 ENRICH_REQUEST_DELAY = _env_int("ENRICH_REQUEST_DELAY", 5)  # Gemini 15 RPM 制限に対して余裕をもった待機時間（秒）

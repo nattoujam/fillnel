@@ -13,6 +13,17 @@ from fillnel.services.gemini import (
 import fillnel.services.gemini as gemini_module
 
 
+@pytest.fixture
+def gemini_client(monkeypatch):
+    """genai.Client をモックした GeminiClient を生成する。__init__ を通す。"""
+    def _make():
+        mock_genai = MagicMock()
+        monkeypatch.setattr("fillnel.services.gemini.genai", mock_genai)
+        client = GeminiClient("test-key")
+        return client, mock_genai
+    return _make
+
+
 def make_client_error(code: int) -> ClientError:
     return ClientError(code, {"error": {"code": code, "message": "API key not valid", "status": "INVALID_ARGUMENT"}})
 
@@ -290,12 +301,12 @@ class TestExtractFromChunks:
 
 
 class TestCollectArticles:
-    def _make_client(self, response: MagicMock) -> GeminiClient:
-        client = GeminiClient.__new__(GeminiClient)
+    def _make_client(self, gemini_client, response: MagicMock) -> GeminiClient:
+        client, mock_genai = gemini_client()
         client._generate = MagicMock(return_value=response)
         return client
 
-    def test_returns_articles_from_grounding_supports(self):
+    def test_returns_articles_from_grounding_supports(self, gemini_client):
         text = make_structured_text([("記事A", "要約A"), ("記事B", "要約B")])
         candidate = make_candidate_with_position_supports(
             text,
@@ -306,63 +317,63 @@ class TestCollectArticles:
         response = MagicMock()
         response.text = text
         response.candidates = [candidate]
-        client = self._make_client(response)
+        client = self._make_client(gemini_client, response)
         result = client.collect_articles({"AI": 6.0, "TypeScript": 4.0}, [])
         assert len(result) == 2
         assert result[0]["url"] == "https://a.com/article/1"
 
-    def test_passes_topics_to_prompt(self):
+    def test_passes_topics_to_prompt(self, gemini_client):
         response = make_response(chunks=[], supports=[])
-        client = self._make_client(response)
+        client = self._make_client(gemini_client, response)
         client.collect_articles({"AI": 6.0, "TypeScript": 4.0}, [])
         prompt = client._generate.call_args[0][0]
         assert "AI" in prompt
         assert "TypeScript" in prompt
 
-    def test_passes_domains_to_prompt(self):
+    def test_passes_domains_to_prompt(self, gemini_client):
         response = make_response(chunks=[], supports=[])
-        client = self._make_client(response)
+        client = self._make_client(gemini_client, response)
         client.collect_articles({"AI": 6.0}, ["zenn.dev", "qiita.com"])
         prompt = client._generate.call_args[0][0]
         assert "zenn.dev" in prompt
         assert "qiita.com" in prompt
 
-    def test_uses_default_topic_when_empty(self):
+    def test_uses_default_topic_when_empty(self, gemini_client):
         response = make_response(chunks=[], supports=[])
-        client = self._make_client(response)
+        client = self._make_client(gemini_client, response)
         client.collect_articles({}, [])
         prompt = client._generate.call_args[0][0]
         assert "一般技術" in prompt
 
-    def test_prompt_does_not_contain_url_field(self):
+    def test_prompt_does_not_contain_url_field(self, gemini_client):
         """プロンプトにURL出力指示が含まれないことを確認する。"""
         response = make_response(chunks=[], supports=[])
-        client = self._make_client(response)
+        client = self._make_client(gemini_client, response)
         client.collect_articles({"AI": 6.0}, [])
         prompt = client._generate.call_args[0][0]
         assert "URL:" not in prompt
 
     @pytest.mark.parametrize("code", [400, 403])
-    def test_raises_runtime_error_on_invalid_api_key(self, code):
-        client = GeminiClient.__new__(GeminiClient)
+    def test_raises_runtime_error_on_invalid_api_key(self, code, gemini_client):
+        client, _ = gemini_client()
         client._generate = MagicMock(side_effect=make_client_error(code))
         with pytest.raises(RuntimeError, match="Gemini APIキーが無効です"):
             client.collect_articles({"AI": 6.0}, [])
 
-    def test_raises_runtime_error_on_rate_limit(self):
-        client = GeminiClient.__new__(GeminiClient)
+    def test_raises_runtime_error_on_rate_limit(self, gemini_client):
+        client, _ = gemini_client()
         client._generate = MagicMock(side_effect=make_client_error(429))
         with pytest.raises(RuntimeError, match="レートリミット"):
             client.collect_articles({"AI": 6.0}, [])
 
-    def test_raises_runtime_error_on_other_client_error(self):
-        client = GeminiClient.__new__(GeminiClient)
+    def test_raises_runtime_error_on_other_client_error(self, gemini_client):
+        client, _ = gemini_client()
         client._generate = MagicMock(side_effect=make_client_error(404))
         with pytest.raises(RuntimeError, match="Gemini APIエラー"):
             client.collect_articles({"AI": 6.0}, [])
 
-    def test_raises_runtime_error_after_server_error_retries(self):
-        client = GeminiClient.__new__(GeminiClient)
+    def test_raises_runtime_error_after_server_error_retries(self, gemini_client):
+        client, _ = gemini_client()
         f = concurrent.futures.Future()
         f.set_exception(make_server_error(503))
         client._generate = MagicMock(side_effect=RetryError(f))
@@ -402,15 +413,15 @@ class TestParseTags:
 
 
 class TestEstimateTags:
-    def _make_client(self, response_text: str) -> GeminiClient:
-        client = GeminiClient.__new__(GeminiClient)
+    def _make_client(self, gemini_client, response_text: str) -> GeminiClient:
+        client, mock_genai = gemini_client()
         resp = MagicMock()
         resp.text = response_text
         client._generate_text = MagicMock(return_value=resp)
         return client
 
-    def test_returns_parsed_tags(self):
-        client = self._make_client('["AI", "機械学習"]')
+    def test_returns_parsed_tags(self, gemini_client):
+        client = self._make_client(gemini_client, '["AI", "機械学習"]')
         result = client.estimate_tags(
             title="AIの最新動向",
             url="https://example.com/ai",
@@ -418,8 +429,8 @@ class TestEstimateTags:
         )
         assert result == ["AI", "機械学習"]
 
-    def test_includes_title_and_url_in_prompt(self):
-        client = self._make_client('["AI"]')
+    def test_includes_title_and_url_in_prompt(self, gemini_client):
+        client = self._make_client(gemini_client, '["AI"]')
         client.estimate_tags(
             title="AIの最新動向",
             url="https://example.com/ai",
@@ -429,22 +440,22 @@ class TestEstimateTags:
         assert "AIの最新動向" in prompt
         assert "https://example.com/ai" in prompt
 
-    def test_returns_empty_on_client_error(self):
-        client = GeminiClient.__new__(GeminiClient)
+    def test_returns_empty_on_client_error(self, gemini_client):
+        client, _ = gemini_client()
         client._generate_text = MagicMock(side_effect=make_client_error(403))
         result = client.estimate_tags("title", "https://example.com", [])
         assert result == []
 
-    def test_returns_empty_on_retry_error(self):
-        client = GeminiClient.__new__(GeminiClient)
+    def test_returns_empty_on_retry_error(self, gemini_client):
+        client, _ = gemini_client()
         f = concurrent.futures.Future()
         f.set_exception(make_server_error(503))
         client._generate_text = MagicMock(side_effect=RetryError(f))
         result = client.estimate_tags("title", "https://example.com", [])
         assert result == []
 
-    def test_retries_on_429_and_succeeds(self):
-        client = GeminiClient.__new__(GeminiClient)
+    def test_retries_on_429_and_succeeds(self, gemini_client):
+        client, _ = gemini_client()
         resp = MagicMock()
         resp.text = '["AI"]'
         client._generate_text = MagicMock(side_effect=[
@@ -456,10 +467,87 @@ class TestEstimateTags:
         assert result == ["AI"]
         assert client._generate_text.call_count == 2
 
-    def test_returns_empty_after_max_429_retries(self):
-        client = GeminiClient.__new__(GeminiClient)
+    def test_returns_empty_after_max_429_retries(self, gemini_client):
+        client, _ = gemini_client()
         client._generate_text = MagicMock(side_effect=make_client_error(429))
         with patch("fillnel.services.gemini.time.sleep"):
             result = client.estimate_tags("title", "https://example.com", [])
         assert result == []
         assert client._generate_text.call_count == 3
+
+
+class TestEmbedTexts:
+    def test_single_batch_under_limit(self, gemini_client):
+        """100件以内は1バッチで処理。"""
+        client, mock_genai = gemini_client()
+        texts = [f"text{i}" for i in range(50)]
+        mock_embeddings = [MagicMock(values=[float(i), 0.0, 0.0]) for i in range(50)]
+        mock_genai.Client.return_value.models.embed_content.return_value = MagicMock(embeddings=mock_embeddings)
+
+        with patch("fillnel.services.gemini.time.sleep"):
+            result = client.embed_texts(texts)
+
+        assert len(result) == 50
+        mock_genai.Client.return_value.models.embed_content.assert_called_once()
+        args = mock_genai.Client.return_value.models.embed_content.call_args
+        assert args.kwargs["contents"] == texts
+
+    def test_multi_batch_splits_into_chunks(self, gemini_client):
+        """100件超えは100件ずつ分割して呼び出す。"""
+        client, mock_genai = gemini_client()
+        texts = [f"text{i}" for i in range(250)]
+
+        call_count = [0]
+
+        def side_effect(*, contents, **kwargs):
+            call_count[0] += 1
+            n = len(contents)
+            embeddings = [MagicMock(values=[float(i), 0.0, 0.0]) for i in range(n)]
+            return MagicMock(embeddings=embeddings)
+
+        mock_genai.Client.return_value.models.embed_content.side_effect = side_effect
+
+        with patch("fillnel.services.gemini.time.sleep"):
+            result = client.embed_texts(texts)
+
+        assert len(result) == 250
+        assert call_count[0] == 3  # 100+100+50
+
+    def test_result_order_preserved(self, gemini_client):
+        """複数バッチでも結果の順序は原文書の順序と一致する。"""
+        client, mock_genai = gemini_client()
+        texts = [f"text{i}" for i in range(150)]
+
+        global_idx = [0]  # mutable counter
+
+        def side_effect(*, contents, **kwargs):
+            embeddings = [
+                MagicMock(values=[float(global_idx[0] + i), 0.0, 0.0])
+                for i in range(len(contents))
+            ]
+            global_idx[0] += len(contents)
+            return MagicMock(embeddings=embeddings)
+
+        mock_genai.Client.return_value.models.embed_content.side_effect = side_effect
+
+        with patch("fillnel.services.gemini.time.sleep"):
+            result = client.embed_texts(texts)
+
+        for i, vec in enumerate(result):
+            assert vec[0] == float(i)
+
+
+class TestCreateGeminiClient:
+    def test_creates_client_with_api_key(self, monkeypatch):
+        """create_gemini_client が api_key を渡して GeminiClient を生成する。"""
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        mock_client = MagicMock()
+        monkeypatch.setattr("fillnel.services.gemini.genai.Client", mock_client)
+
+        from fillnel.services.gemini import create_gemini_client
+
+        client = create_gemini_client()
+
+        mock_client.assert_called_once_with(api_key="test-key")
+        assert isinstance(client, GeminiClient)
+        assert client._client is mock_client.return_value
