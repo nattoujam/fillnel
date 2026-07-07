@@ -2,6 +2,8 @@ import logging
 
 import numpy as np
 
+from fillnel.config import EMBED_EXCERPT_MAX_CHARS
+
 logger = logging.getLogger(__name__)
 
 EMBED_MODEL = "gemini-embedding-001"
@@ -26,7 +28,10 @@ def score_articles(articles: list[dict], profile_vector: list[float] | None, cli
         logger.info("profile_vectorがないためスコアリングをスキップ")
         return articles
 
-    texts = [f"{a.get('title', '')} {a.get('excerpt', '')}".strip() for a in articles]
+    texts = [
+        f"{a.get('title', '')} {a.get('excerpt', '')[:EMBED_EXCERPT_MAX_CHARS]}".strip()
+        for a in articles
+    ]
     vecs = client.embed_texts(texts)
 
     for article, vec in zip(articles, vecs):

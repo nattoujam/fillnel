@@ -11,7 +11,7 @@ from google.genai import types
 from google.genai.errors import ClientError, ServerError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, RetryError
 
-from fillnel.config import GEMINI_MODEL, GEMINI_TAG_MODEL, MAX_ARTICLES
+from fillnel.config import GEMINI_MODEL, GEMINI_TAG_MODEL, MAX_ARTICLES, EMBED_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +247,38 @@ def _extract_retry_delay(e: ClientError) -> float:
     return 65.0
 
 
+def _extract_quota_id(e: ClientError) -> str | None:
+    """429レスポンスの QuotaFailure から、どの制限（RPM/TPM/RPD等）に達したかを示す quotaId を返す。
+    取得できなければ None を返す。
+    """
+    try:
+        details_list = e.details.get("error", {}).get("details", [])
+        for detail in details_list:
+            if "QuotaFailure" in detail.get("@type", ""):
+                violations = detail.get("violations", [])
+                if violations:
+                    return violations[0].get("quotaId") or violations[0].get("quotaMetric")
+    except Exception:
+        pass
+    return None
+
+
+def _classify_quota(quota_id: str | None) -> str:
+    """quotaId文字列から RPM/TPM/RPD 等の分かりやすい種別ラベルを推定する。判別できなければ空文字を返す。"""
+    if not quota_id:
+        return ""
+    is_per_day = "PerDay" in quota_id
+    is_per_minute = "PerMinute" in quota_id
+    is_tokens = "Tokens" in quota_id
+    if is_per_day:
+        return "RPD:日次リクエスト数上限"
+    if is_per_minute and is_tokens:
+        return "TPM:分あたりトークン数上限"
+    if is_per_minute:
+        return "RPM:分あたりリクエスト数上限"
+    return ""
+
+
 def _parse_tags(response) -> list[str]:
     """レスポンスからJSONタグ配列をパースする。"""
     text = response.text.strip()
@@ -347,14 +379,13 @@ class GeminiClient:
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """テキストのリストをまとめて Embedding ベクトルに変換する。
-        API制限（1バッチ最大100リクエスト）のため、100件ずつ分割して呼び出す。
+        TPM制限対策のため、EMBED_BATCH_SIZE件ずつ分割して呼び出す。
         """
-        BATCH_SIZE = 100
         all_vecs: list[list[float]] = []
 
-        for i in range(0, len(texts), BATCH_SIZE):
-            chunk = texts[i:i + BATCH_SIZE]
-            logger.debug(f"[embed_batch] model={EMBED_MODEL} chunk={i // BATCH_SIZE + 1} count={len(chunk)}")
+        for i in range(0, len(texts), EMBED_BATCH_SIZE):
+            chunk = texts[i:i + EMBED_BATCH_SIZE]
+            logger.debug(f"[embed_batch] model={EMBED_MODEL} chunk={i // EMBED_BATCH_SIZE + 1} count={len(chunk)}")
 
             for attempt in range(3):
                 try:
@@ -367,7 +398,13 @@ class GeminiClient:
                 except ClientError as e:
                     if e.code == 429 and attempt < 2:
                         delay = _extract_retry_delay(e)
-                        logger.warning(f"レートリミット (429)、{delay:.0f}秒後にリトライします... ({attempt + 1}/3)")
+                        quota_id = _extract_quota_id(e)
+                        quota_label = _classify_quota(quota_id)
+                        logger.debug(f"[embed_batch] 429 detail: {e.details}")
+                        logger.warning(
+                            f"レートリミット (429, {quota_label or '種別不明'}, quota={quota_id or '不明'})、"
+                            f"{delay:.0f}秒後にリトライします... ({attempt + 1}/3)"
+                        )
                         time.sleep(delay)
                         continue
                     raise
@@ -445,7 +482,13 @@ class GeminiClient:
             except ClientError as e:
                 if e.code == 429 and attempt < 2:
                     delay = _extract_retry_delay(e)
-                    logger.warning(f"レートリミット (429)、{delay:.0f}秒後にリトライします... ({attempt + 1}/3)")
+                    quota_id = _extract_quota_id(e)
+                    quota_label = _classify_quota(quota_id)
+                    logger.debug(f"[estimate_tags] 429 detail: {e.details}")
+                    logger.warning(
+                        f"レートリミット (429, {quota_label or '種別不明'}, quota={quota_id or '不明'})、"
+                        f"{delay:.0f}秒後にリトライします... ({attempt + 1}/3)"
+                    )
                     time.sleep(delay)
                     continue
                 logger.warning(f"タグ推定失敗 ({url}): {e}")

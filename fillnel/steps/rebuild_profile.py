@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 
-from fillnel.config import TOP_FAVORITES
+from fillnel.config import TOP_FAVORITES, EMBED_EXCERPT_MAX_CHARS
 from fillnel.services.gemini import GeminiClient
 from fillnel.services.raindrop import BookmarkClient
 from fillnel.services import profile as profile_svc
@@ -44,7 +44,7 @@ def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: 
 
         url = item.get("link", "")
         title = item.get("title", "")
-        text = f"{title} {excerpt}".strip()
+        text = f"{title} {excerpt[:EMBED_EXCERPT_MAX_CHARS]}".strip()
         if not text or not url:
             continue
 

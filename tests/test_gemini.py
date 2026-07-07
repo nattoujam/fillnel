@@ -478,24 +478,27 @@ class TestEstimateTags:
 
 class TestEmbedTexts:
     def test_single_batch_under_limit(self, gemini_client):
-        """100件以内は1バッチで処理。"""
+        """EMBED_BATCH_SIZE件以内は1バッチで処理。"""
         client, mock_genai = gemini_client()
-        texts = [f"text{i}" for i in range(50)]
-        mock_embeddings = [MagicMock(values=[float(i), 0.0, 0.0]) for i in range(50)]
+        n = gemini_module.EMBED_BATCH_SIZE // 2
+        texts = [f"text{i}" for i in range(n)]
+        mock_embeddings = [MagicMock(values=[float(i), 0.0, 0.0]) for i in range(n)]
         mock_genai.Client.return_value.models.embed_content.return_value = MagicMock(embeddings=mock_embeddings)
 
         with patch("fillnel.services.gemini.time.sleep"):
             result = client.embed_texts(texts)
 
-        assert len(result) == 50
+        assert len(result) == n
         mock_genai.Client.return_value.models.embed_content.assert_called_once()
         args = mock_genai.Client.return_value.models.embed_content.call_args
         assert args.kwargs["contents"] == texts
 
     def test_multi_batch_splits_into_chunks(self, gemini_client):
-        """100件超えは100件ずつ分割して呼び出す。"""
+        """EMBED_BATCH_SIZE件超えはEMBED_BATCH_SIZE件ずつ分割して呼び出す。"""
         client, mock_genai = gemini_client()
-        texts = [f"text{i}" for i in range(250)]
+        batch_size = gemini_module.EMBED_BATCH_SIZE
+        total = batch_size * 2 + batch_size // 2
+        texts = [f"text{i}" for i in range(total)]
 
         call_count = [0]
 
@@ -510,8 +513,8 @@ class TestEmbedTexts:
         with patch("fillnel.services.gemini.time.sleep"):
             result = client.embed_texts(texts)
 
-        assert len(result) == 250
-        assert call_count[0] == 3  # 100+100+50
+        assert len(result) == total
+        assert call_count[0] == 3  # batch_size + batch_size + batch_size//2
 
     def test_result_order_preserved(self, gemini_client):
         """複数バッチでも結果の順序は原文書の順序と一致する。"""
