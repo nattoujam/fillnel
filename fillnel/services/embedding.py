@@ -26,14 +26,14 @@ from fillnel.config import EMBED_EXCERPT_MAX_CHARS
 logger = logging.getLogger(__name__)
 
 # ローカル埋め込みモデル（オフライン・無料・高速）
-_EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 _embed_model: SentenceTransformer | None = None
 
 
 def _get_model() -> SentenceTransformer:
     global _embed_model
     if _embed_model is None:
-        _embed_model = SentenceTransformer(_EMBED_MODEL_NAME)
+        _embed_model = SentenceTransformer(EMBED_MODEL_NAME)
     return _embed_model
 
 

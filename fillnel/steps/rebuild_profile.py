@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 import numpy as np
 
 from fillnel.config import TOP_FAVORITES, EMBED_EXCERPT_MAX_CHARS
-from fillnel.services.embedding import embed_texts
+from fillnel.services.embedding import EMBED_MODEL_NAME, embed_texts
 from fillnel.services.gemini import GeminiClient
 from fillnel.services.raindrop import BookmarkClient
 from fillnel.services import profile as profile_svc
@@ -23,7 +23,11 @@ def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: 
     profile["tags"] = {}
     profile["domains"] = {}
 
-    cache: dict = profile.get("embedding_cache", {})
+    # 埋め込みモデルが変わっていたら、次元が異なり得るためキャッシュごと破棄する
+    if profile.get("embedding_model") != EMBED_MODEL_NAME:
+        cache: dict = {}
+    else:
+        cache = profile.get("embedding_cache", {})
     current_urls: set[str] = set()
     vecs: list[list[float]] = []
     favorites: list[dict] = []
@@ -82,6 +86,7 @@ def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: 
         profile.pop("profile_vector", None)
 
     profile["embedding_cache"] = cache
+    profile["embedding_model"] = EMBED_MODEL_NAME
     profile_svc.save(profile)
     logger.info(
         f"rebuild_profile: {len(items)}件からプロファイルを再構築"
