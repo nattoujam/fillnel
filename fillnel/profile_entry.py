@@ -2,7 +2,7 @@
 プロファイル確認コマンド。
 
 実行方法:
-  poetry run fillnel-profile
+  uv run fillnel-profile
 """
 import sys
 

@@ -2,7 +2,7 @@
 リンク切れ検出バッチ。
 
 実行方法:
-  poetry run fillnel-check-links
+  uv run fillnel-check-links
 """
 from dotenv import load_dotenv
 

@@ -49,14 +49,14 @@ CLIで管理することもできる：
 
 ```bash
 # 一覧表示
-poetry run fillnel-feeds list
+uv run fillnel-feeds list
 
 # 追加
-poetry run fillnel-feeds add https://example.com/feed
+uv run fillnel-feeds add https://example.com/feed
 
 # 削除（URL or 番号）
-poetry run fillnel-feeds remove https://example.com/feed
-poetry run fillnel-feeds remove 3
+uv run fillnel-feeds remove https://example.com/feed
+uv run fillnel-feeds remove 3
 ```
 
 ### Raindrop.io の準備
@@ -103,31 +103,31 @@ sudo systemctl disable --now article-recommender.timer
 
 ```bash
 # 依存パッケージのインストール
-poetry install
+uv sync
 
 # フルバッチ
-poetry run fillnel
+uv run fillnel
 
 # エンリッチ（要約・タグ付与）+ プロファイル再構築
-poetry run fillnel-enrich
-poetry run fillnel-enrich --force   # 既存タグも含めて全件再推定
+uv run fillnel-enrich
+uv run fillnel-enrich --force   # 既存タグも含めて全件再推定
 
 # プロファイル再構築（Embeddingキャッシュも更新）
-poetry run fillnel-rebuild-profile
+uv run fillnel-rebuild-profile
 
 # RSSフィード管理
-poetry run fillnel-feeds list
-poetry run fillnel-feeds add <url>
-poetry run fillnel-feeds remove <url|index>
+uv run fillnel-feeds list
+uv run fillnel-feeds add <url>
+uv run fillnel-feeds remove <url|index>
 
 # リンク切れ検出
-poetry run fillnel-check-links
+uv run fillnel-check-links
 
 # 好みプロファイルの確認
-poetry run fillnel-profile
+uv run fillnel-profile
 
 # テスト
-poetry run pytest
+uv run pytest
 ```
 
 ## 技術スタック

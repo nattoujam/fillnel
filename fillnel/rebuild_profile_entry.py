@@ -3,7 +3,7 @@
 Gemini呼び出しなしで、現在のお気に入り全件からプロファイルを再構築する。
 
 実行方法:
-  poetry run fillnel-rebuild-profile
+  uv run fillnel-rebuild-profile
 """
 from dotenv import load_dotenv
 

@@ -3,8 +3,8 @@
 お気に入りフォルダの記事にexcerpt・タグを付与し、プロファイルを更新する。
 
 実行方法:
-  poetry run fillnel-enrich           # タグなし記事のみ処理 + プロファイル更新
-  poetry run fillnel-enrich --force   # 全件タグを再推定 + プロファイル更新
+  uv run fillnel-enrich           # タグなし記事のみ処理 + プロファイル更新
+  uv run fillnel-enrich --force   # 全件タグを再推定 + プロファイル更新
 """
 import argparse
 
