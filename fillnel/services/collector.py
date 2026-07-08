@@ -33,9 +33,7 @@ def fetch_feed(url: str) -> list[dict]:
             title = entry.get("title", "")
             excerpt = _strip_html(entry.get("summary", ""))
             articles.append({"title": title, "url": link, "excerpt": excerpt})
-        logger.debug(f"[feed] {url} → {len(articles)}件:\n" + "\n".join(
-            f"  - {a['title']} ({a['url']})" for a in articles
-        ))
+        logger.debug(f"[feed] {url} → {len(articles)}件")
         return articles
     except Exception as e:
         logger.warning(f"RSS fetch 失敗 ({url}): {e}")

@@ -385,7 +385,7 @@ class GeminiClient:
 
         for i in range(0, len(texts), EMBED_BATCH_SIZE):
             chunk = texts[i:i + EMBED_BATCH_SIZE]
-            logger.debug(f"[embed_batch] model={EMBED_MODEL} chunk={i // EMBED_BATCH_SIZE + 1} count={len(chunk)}")
+            logger.info(f"embedding: chunk {i // EMBED_BATCH_SIZE + 1}/{(len(texts) + EMBED_BATCH_SIZE - 1) // EMBED_BATCH_SIZE} ({len(chunk)}件)")
 
             for attempt in range(3):
                 try:
@@ -400,7 +400,6 @@ class GeminiClient:
                         delay = _extract_retry_delay(e)
                         quota_id = _extract_quota_id(e)
                         quota_label = _classify_quota(quota_id)
-                        logger.debug(f"[embed_batch] 429 detail: {e.details}")
                         logger.warning(
                             f"レートリミット (429, {quota_label or '種別不明'}, quota={quota_id or '不明'})、"
                             f"{delay:.0f}秒後にリトライします... ({attempt + 1}/3)"
@@ -411,7 +410,7 @@ class GeminiClient:
 
             time.sleep(self._EMBED_INTERVAL)
 
-        logger.debug(f"[embed_batch] total count={len(all_vecs)}")
+        logger.info(f"embedding: 完了 ({len(all_vecs)}件)")
         return all_vecs
 
 
