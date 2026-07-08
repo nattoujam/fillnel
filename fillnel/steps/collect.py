@@ -16,7 +16,7 @@ def run(gemini: GeminiClient, favorites: list[dict] | None = None) -> list[dict]
     profile = profile_svc.load()
     profile_vector = profile.get("profile_vector")
 
-    scored = score_articles(candidates, profile_vector, gemini)
+    scored = score_articles(candidates, profile_vector)
     top = scored[:MAX_FEED_CANDIDATES]
     logger.info(f"collect: Embedding上位{len(top)}件をフィルタリングに渡す")
 

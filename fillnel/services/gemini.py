@@ -11,14 +11,35 @@ from google.genai import types
 from google.genai.errors import ClientError, ServerError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, RetryError
 
-from fillnel.config import GEMINI_MODEL, GEMINI_TAG_MODEL, MAX_ARTICLES, EMBED_BATCH_SIZE
+from fillnel.config import GEMINI_MODEL, GEMINI_TAG_MODEL, MAX_ARTICLES
 
 logger = logging.getLogger(__name__)
 
+# --- Mock implementations for local testing ---------------------------------
+
+class MockGeminiClient:
+    """A minimal mock of GeminiClient that returns deterministic dummy data."""
+
+    def summarize_article(self, title: str, url: str) -> str:
+        logger.debug(f"[mock summarize] title={title} url={url}")
+        return ""
+
+    def collect_articles(self, tag_weights: dict[str, float], domains: list[str], favorites: list[dict] | None = None) -> list[dict]:
+        logger.debug("[mock collect] returning empty list")
+        return []
+
+    def filter_articles(self, candidates: list[dict], favorites: list[dict] | None = None) -> list[dict]:
+        logger.debug("[mock filter] returning first MAX_ARTICLES candidates")
+        return candidates[:MAX_ARTICLES]
+
+    def estimate_tags(self, title: str, url: str, existing_tags: list[str]) -> list[str]:
+        logger.debug(f"[mock estimate_tags] title={title} url={url}")
+        return []
+
+# --- End mock ----------------------------------------------------------------
+
 MODEL = GEMINI_MODEL
 TAG_MODEL = GEMINI_TAG_MODEL
-# gemini-embedding-001 と 2 は embedding space が互換ではないため固定
-EMBED_MODEL = "gemini-embedding-001"
 
 FILTER_PROMPT = """\
 以下の記事候補から、ユーザーの興味に合う高品質な記事を最大{max_count}件選んでください。
@@ -295,8 +316,6 @@ def _parse_tags(response) -> list[str]:
 
 
 class GeminiClient:
-    _EMBED_INTERVAL = 60.0  # embeddingバッチ間の待機時間
-
     def __init__(self, api_key: str):
         self._client = genai.Client(api_key=api_key)
 
@@ -376,44 +395,6 @@ class GeminiClient:
             ) from e
 
         return _extract_articles(response)
-
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """テキストのリストをまとめて Embedding ベクトルに変換する。
-        TPM制限対策のため、EMBED_BATCH_SIZE件ずつ分割して呼び出す。
-        """
-        all_vecs: list[list[float]] = []
-
-        for i in range(0, len(texts), EMBED_BATCH_SIZE):
-            chunk = texts[i:i + EMBED_BATCH_SIZE]
-            logger.info(f"embedding: chunk {i // EMBED_BATCH_SIZE + 1}/{(len(texts) + EMBED_BATCH_SIZE - 1) // EMBED_BATCH_SIZE} ({len(chunk)}件)")
-
-            for attempt in range(3):
-                try:
-                    result = self._client.models.embed_content(
-                        model=EMBED_MODEL,
-                        contents=chunk,
-                    )
-                    all_vecs.extend(e.values for e in result.embeddings)
-                    break
-                except ClientError as e:
-                    if e.code == 429 and attempt < 2:
-                        delay = _extract_retry_delay(e)
-                        quota_id = _extract_quota_id(e)
-                        quota_label = _classify_quota(quota_id)
-                        logger.warning(
-                            f"レートリミット (429, {quota_label or '種別不明'}, quota={quota_id or '不明'})、"
-                            f"{delay:.0f}秒後にリトライします... ({attempt + 1}/3)"
-                        )
-                        time.sleep(delay)
-                        continue
-                    raise
-
-            time.sleep(self._EMBED_INTERVAL)
-
-        logger.info(f"embedding: 完了 ({len(all_vecs)}件)")
-        return all_vecs
-
-
 
     def filter_articles(self, candidates: list[dict], favorites: list[dict] | None = None) -> list[dict]:
         """Embedding上位候補をGemini（Groundingなし）で質フィルタリングする。
@@ -499,5 +480,9 @@ class GeminiClient:
 
 
 def create_gemini_client() -> GeminiClient:
-    api_key = os.environ["GEMINI_API_KEY"]
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    # If API key contains 'mock' or MOCK_MODE env var is set, use mock client
+    if "mock" in api_key.lower() or os.getenv("MOCK_MODE", "false").lower() in {"1", "true", "yes"}:
+        logger.info("Gemini mock mode enabled")
+        return MockGeminiClient()
     return GeminiClient(api_key)

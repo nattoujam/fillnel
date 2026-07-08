@@ -2,9 +2,12 @@ from abc import ABC, abstractmethod
 import json
 import os
 import requests
+import logging
 
 
 UNSORTED_COLLECTION_ID = -1
+
+logger = logging.getLogger(__name__)
 
 
 class BookmarkClient(ABC):
@@ -103,8 +106,66 @@ class RaindropClient(BookmarkClient):
             return
         for id in ids:
             self._session.delete(f"{self.BASE_URL}/raindrop/{id}").raise_for_status()
+# --- Mock implementation for local testing ---------------------------------
+
+class MockRaindropClient(BookmarkClient):
+    def __init__(self):
+        # prepopulate a favorite collection with dummy bookmarks
+        self._bookmarks: list[dict] = [
+            {
+                "_id": 1,
+                "title": "Mock Article 1",
+                "link": "https://example.com/article1",
+                "excerpt": "Mock excerpt 1",
+                "tags": [],
+                "collectionId": 1,
+            },
+            {
+                "_id": 2,
+                "title": "Mock Article 2",
+                "link": "https://example.com/article2",
+                "excerpt": "Mock excerpt 2",
+                "tags": [],
+                "collectionId": 1,
+            },
+        ]
+        self._collections: dict[str, int] = {"Favorite": 1, "お気に入り": 1}
+        self._next_id = 3
+
+    def get_tags(self) -> list[str]:
+        return []
+
+    def get_or_create_collection(self, name: str) -> int:
+        # Return a deterministic ID for known names
+        return self._collections.setdefault(name, self._next_id)
+
+    def get_bookmarks(self, collection_id: int | None = None, tag: str | None = None, not_tag: str | None = None) -> list[dict]:
+        return [b for b in self._bookmarks if (collection_id is None or b.get("collectionId") == collection_id)]
+
+    def create_bookmark(self, bookmark: dict) -> None:
+        bookmark = bookmark.copy()
+        bookmark["_id"] = self._next_id
+        self._next_id += 1
+        self._bookmarks.append(bookmark)
+
+    def update_bookmark(self, id: str, patch: dict) -> None:
+        for b in self._bookmarks:
+            if b.get("_id") == id:
+                b.update(patch)
+                break
+
+    def delete_bookmark(self, id: str) -> None:
+        self._bookmarks = [b for b in self._bookmarks if b.get("_id") != id]
+
+    def delete_bookmarks(self, ids: list[int]) -> None:
+        self._bookmarks = [b for b in self._bookmarks if b.get("_id") not in ids]
+
+# --------------------------------------------------------------------------
 
 
 def create_raindrop_client() -> RaindropClient:
-    token = os.environ["RAINDROP_TOKEN"]
+    token = os.getenv("RAINDROP_TOKEN", "")
+    if "mock" in token.lower() or os.getenv("MOCK_MODE", "false").lower() in {"1", "true", "yes"}:
+        logger.info("Raindrop mock mode enabled")
+        return MockRaindropClient()
     return RaindropClient(token)

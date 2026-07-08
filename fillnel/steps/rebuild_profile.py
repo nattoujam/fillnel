@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import numpy as np
 
 from fillnel.config import TOP_FAVORITES, EMBED_EXCERPT_MAX_CHARS
+from fillnel.services.embedding import embed_texts
 from fillnel.services.gemini import GeminiClient
 from fillnel.services.raindrop import BookmarkClient
 from fillnel.services import profile as profile_svc
@@ -59,11 +60,11 @@ def run(raindrop: BookmarkClient, gemini: GeminiClient, favorite_collection_id: 
             uncached_indices.append(len(vecs))
             vecs.append(None)  # プレースホルダー
 
-    # 2パス目: 新規Embeddingを一括で取得
+    # 2パス目: 新規Embeddingを一括で取得（ローカル埋め込み）
     new_count = 0
     if uncached_items:
         texts = [t for _, _, t in uncached_items]
-        new_vecs = gemini.embed_texts(texts)
+        new_vecs = embed_texts(texts)
         for i, (url, content_hash, _), vec in zip(uncached_indices, uncached_items, new_vecs):
             vecs[i] = vec
             cache[url] = {"hash": content_hash, "vector": vec}
