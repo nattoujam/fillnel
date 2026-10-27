@@ -39,6 +39,7 @@ MAX_FEED_CANDIDATES = _env_int("MAX_FEED_CANDIDATES", 20)  # Embedding上位N件
 
 # --- RSS フィード設定 ---
 FEEDS_PATH = _env_path("FEEDS_PATH", "config/feeds.yml")
+FEED_MAX_AGE_DAYS = _env_int("FEED_MAX_AGE_DAYS", 7)  # 収集対象にする記事の公開からの日数
 
 # --- Gemini モデル設定 ---
 GEMINI_MODEL = _env_str("GEMINI_MODEL", "gemini-3.1-flash-lite")    # collect/filter 用モデル

@@ -26,7 +26,7 @@ from fillnel.config import EMBED_EXCERPT_MAX_CHARS
 logger = logging.getLogger(__name__)
 
 # ローカル埋め込みモデル（オフライン・無料・高速）
-EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
+EMBED_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 _embed_model: SentenceTransformer | None = None
 
 

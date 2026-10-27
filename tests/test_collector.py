@@ -38,11 +38,16 @@ class TestStripHtml:
 
 
 class TestFetchFeed:
-    def _make_entry(self, title="記事", link="https://a.com", summary="要約"):
+    def _make_entry(self, title="記事", link="https://a.com", summary="要約", published_parsed=None):
         from unittest.mock import MagicMock
         e = MagicMock()
-        e.get.side_effect = lambda key, default="": {"title": title, "link": link, "summary": summary}.get(key, default)
+        fields = {"title": title, "link": link, "summary": summary, "published_parsed": published_parsed}
+        e.get.side_effect = lambda key, default="": fields.get(key, default)
         return e
+
+    def _days_ago(self, days):
+        import time
+        return time.gmtime(time.time() - days * 86400)
 
     def _make_parsed(self, entries):
         from unittest.mock import MagicMock
@@ -67,6 +72,24 @@ class TestFetchFeed:
         with patch("fillnel.services.collector.feedparser.parse", return_value=self._make_parsed([entry])):
             result = collector_svc.fetch_feed("https://example.com/feed")
         assert result[0]["excerpt"] == "要約"
+
+    def test_keeps_recent_entries(self):
+        entry = self._make_entry(published_parsed=self._days_ago(6))
+        with patch("fillnel.services.collector.feedparser.parse", return_value=self._make_parsed([entry])):
+            result = collector_svc.fetch_feed("https://example.com/feed")
+        assert len(result) == 1
+
+    def test_skips_entries_older_than_max_age(self):
+        entry = self._make_entry(published_parsed=self._days_ago(8))
+        with patch("fillnel.services.collector.feedparser.parse", return_value=self._make_parsed([entry])):
+            result = collector_svc.fetch_feed("https://example.com/feed")
+        assert result == []
+
+    def test_keeps_entries_without_date(self):
+        entry = self._make_entry(published_parsed=None)
+        with patch("fillnel.services.collector.feedparser.parse", return_value=self._make_parsed([entry])):
+            result = collector_svc.fetch_feed("https://example.com/feed")
+        assert len(result) == 1
 
     def test_returns_empty_on_exception(self):
         with patch("fillnel.services.collector.feedparser.parse", side_effect=Exception("error")):

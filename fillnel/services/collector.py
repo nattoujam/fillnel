@@ -1,10 +1,12 @@
+import calendar
 import logging
 import re
+import time
 
 import feedparser
 import yaml
 
-from fillnel.config import FEEDS_PATH
+from fillnel.config import FEEDS_PATH, FEED_MAX_AGE_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,13 @@ def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text).strip()
 
 
+def _is_recent(entry) -> bool:
+    parsed = entry.get("published_parsed") or entry.get("updated_parsed")
+    if not parsed:
+        return True
+    return time.time() - calendar.timegm(parsed) <= FEED_MAX_AGE_DAYS * 86400
+
+
 def fetch_feed(url: str) -> list[dict]:
     logger.debug(f"[feed] fetch: {url}")
     try:
@@ -29,6 +38,8 @@ def fetch_feed(url: str) -> list[dict]:
         for entry in d.entries:
             link = entry.get("link", "")
             if not link:
+                continue
+            if not _is_recent(entry):
                 continue
             title = entry.get("title", "")
             excerpt = _strip_html(entry.get("summary", ""))
