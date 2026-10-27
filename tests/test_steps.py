@@ -6,6 +6,7 @@ import pytest
 from fillnel.steps import check_links, cleanup, collect, enrich, rebuild_profile, register
 from fillnel.steps.check_links import _check_url
 
+from fillnel.services.embedding import EMBED_MODEL_NAME
 from fillnel.services.raindrop import UNSORTED_COLLECTION_ID
 
 COLLECTION_ID = UNSORTED_COLLECTION_ID
@@ -140,11 +141,11 @@ class TestRebuildProfile:
     def setup(self, tmp_path, monkeypatch):
         import fillnel.services.profile as profile_svc
         monkeypatch.setattr(profile_svc, "PROFILE_PATH", tmp_path / "profile.json")
+        self.embed = MagicMock(return_value=[[1.0, 0.0]])
+        monkeypatch.setattr("fillnel.steps.rebuild_profile.embed_texts", self.embed)
 
-    def _make_gemini(self, vec=None):
-        gemini = MagicMock()
-        gemini.embed_texts.return_value = [vec or [1.0, 0.0]]
-        return gemini
+    def _make_gemini(self):
+        return MagicMock()
 
     def test_updates_profile_from_tagged_items(self):
         import fillnel.services.profile as profile_svc
@@ -208,9 +209,9 @@ class TestRebuildProfile:
         client.get_bookmarks.return_value = [
             {"_id": 1, "title": "AI記事", "link": "https://a.com", "tags": [], "excerpt": "要約"},
         ]
-        gemini = self._make_gemini([0.5, 0.5])
+        self.embed.return_value = [[0.5, 0.5]]
 
-        rebuild_profile.run(client, gemini, favorite_collection_id=99)
+        rebuild_profile.run(client, self._make_gemini(), favorite_collection_id=99)
 
         profile = profile_svc.load()
         assert "profile_vector" in profile
@@ -223,13 +224,11 @@ class TestRebuildProfile:
         client.get_bookmarks.return_value = [
             {"_id": 1, "title": "AI記事", "link": "https://a.com", "tags": [], "excerpt": "要約"},
         ]
-        gemini = self._make_gemini()
-
-        rebuild_profile.run(client, gemini, favorite_collection_id=99)
+        rebuild_profile.run(client, self._make_gemini(), favorite_collection_id=99)
 
         profile = profile_svc.load()
         assert "https://a.com" in profile["embedding_cache"]
-        gemini.embed_texts.assert_called_once()
+        self.embed.assert_called_once()
 
     def test_uses_cached_embedding_on_second_run(self):
         client = MagicMock()
@@ -241,7 +240,7 @@ class TestRebuildProfile:
         rebuild_profile.run(client, gemini, favorite_collection_id=99)
 
         # 2回実行しても embed_texts は1回だけ
-        assert gemini.embed_texts.call_count == 1
+        assert self.embed.call_count == 1
 
     def test_purges_stale_cache_entries(self):
         import fillnel.services.profile as profile_svc
@@ -254,7 +253,7 @@ class TestRebuildProfile:
 
         # 初回: a.com と b.com をキャッシュ
         import fillnel.services.profile as ps
-        ps.save({"tags": {}, "domains": {}, "embedding_cache": {
+        ps.save({"tags": {}, "domains": {}, "embedding_model": EMBED_MODEL_NAME, "embedding_cache": {
             "https://b.com": {"hash": "oldhash", "vector": [0.1, 0.2]},
         }})
 
@@ -277,11 +276,9 @@ RSS_ARTICLES = [
 class TestCollect:
     @pytest.fixture(autouse=True)
     def patch_rss_and_embedding(self, monkeypatch):
-        import fillnel.services.collector as collector_svc
-        import fillnel.services.embedding as embedding_svc
         import fillnel.services.profile as profile_svc
-        monkeypatch.setattr(collector_svc, "collect_from_feeds", lambda: RSS_ARTICLES)
-        monkeypatch.setattr(embedding_svc, "score_articles", lambda articles, profile_vector, client: articles)
+        monkeypatch.setattr(collect, "collect_from_feeds", lambda: RSS_ARTICLES)
+        monkeypatch.setattr(collect, "score_articles", lambda articles, profile_vector: articles)
         monkeypatch.setattr(profile_svc, "load", lambda: {"tags": {}, "domains": {}, "profile_vector": [1.0, 0.0]})
 
     def test_returns_articles_from_filter(self):
@@ -304,9 +301,8 @@ class TestCollect:
         assert called_favorites == favorites
 
     def test_caps_at_max_articles(self, monkeypatch):
-        import fillnel.services.collector as collector_svc
         many = [{"title": f"記事{i}", "url": f"https://example.com/{i}", "excerpt": ""} for i in range(50)]
-        monkeypatch.setattr(collector_svc, "collect_from_feeds", lambda: many)
+        monkeypatch.setattr(collect, "collect_from_feeds", lambda: many)
 
         gemini = MagicMock()
         gemini.filter_articles.return_value = many[:15]
